@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: company-platform
+
+server:
+  port: 8080
+
+company:
+  platform:
+    workspace: ${COMPANY_PLATFORM_WORKSPACE:./company-platform/workspace}
+    models:
+      config: ${COMPANY_PLATFORM_MODELS_CONFIG:file:${company.platform.workspace}/models.yml}
+    providers:
+      config: ${COMPANY_PLATFORM_PROVIDERS_CONFIG:file:${company.platform.workspace}/providers.yml}
+    agents:
+      config: ${COMPANY_PLATFORM_AGENTS_CONFIG:file:${company.platform.workspace}/agents.yml}
+    tools:
+      config: ${COMPANY_PLATFORM_TOOLS_CONFIG:file:${company.platform.workspace}/tools.yml}
+    mcps:
+      config: ${COMPANY_PLATFORM_MCPS_CONFIG:file:${company.platform.workspace}/mcps.yml}
+    skills:
+      config: ${COMPANY_PLATFORM_SKILLS_CONFIG:file:${company.platform.workspace}/skills.yml}

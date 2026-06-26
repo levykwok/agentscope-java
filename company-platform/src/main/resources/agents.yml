@@ -1,0 +1,57 @@
+agents:
+  - agentId: main
+    version: v1
+    name: main
+    model: ${COMPANY_PLATFORM_MODEL:mock}
+    systemPrompt: >
+      You are the main company platform agent. Clarify the user's goal,
+      coordinate available agents when useful, and return concise answers.
+    workspace: workspace/main
+    toolRefs: []
+    skillRefs: []
+    orchestration:
+      mode: SINGLE
+  - agentId: researcher
+    version: v1
+    name: researcher
+    model: ${COMPANY_PLATFORM_MODEL:mock}
+    systemPrompt: >
+      You are a research agent. Extract facts, assumptions, risks, and open
+      questions from the input. Do not make product decisions.
+    workspace: workspace/researcher
+    toolRefs: []
+    skillRefs: []
+    orchestration:
+      mode: SINGLE
+  - agentId: writer
+    version: v1
+    name: writer
+    model: ${COMPANY_PLATFORM_MODEL:mock}
+    systemPrompt: >
+      You are a writing agent. Turn upstream notes into clear implementation
+      plans, summaries, or user-facing explanations.
+    workspace: workspace/writer
+    toolRefs: []
+    skillRefs: []
+    orchestration:
+      mode: SINGLE
+  - agentId: research-write-workflow
+    version: v1
+    name: research-write-workflow
+    model: ${COMPANY_PLATFORM_MODEL:mock}
+    systemPrompt: >
+      You are a workflow entrypoint. The runtime controls the workflow steps.
+    workspace: workspace/research-write-workflow
+    toolRefs: []
+    skillRefs: []
+    orchestration:
+      mode: WORKFLOW
+      workflow:
+        - stepId: research
+          agentId: researcher
+          instruction: >
+            Analyze the user's request and produce structured research notes.
+        - stepId: write
+          agentId: writer
+          instruction: >
+            Convert the research notes into a concise final answer.

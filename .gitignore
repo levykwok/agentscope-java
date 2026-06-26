@@ -2,6 +2,8 @@ target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar.sha1
 
 ### IntelliJ IDEA ###
 .idea/
@@ -56,24 +58,37 @@ CLAUDE.md
 
 ##Log
 logs/
+*.log
 
-## Frontend (all frontend/ directories across examples and extensions)
+## Frontend / Node
 # Dependencies
+node_modules/
+**/node_modules/
 **/frontend/node_modules/
 # Build output
+dist/
+build/
 **/frontend/dist/
 **/frontend/build/
 **/frontend/.output/
+aiserver/app/static/platform_live_app/
 # Vite / bundler caches
+.vite/
+.cache/
 **/frontend/.vite/
 **/frontend/.cache/
 **/frontend/.parcel-cache/
 # Type-check / tsc output
+*.tsbuildinfo
 **/frontend/*.tsbuildinfo
 # Env files (may contain secrets)
+.env
+.env.local
+.env.*.local
 **/frontend/.env.local
 **/frontend/.env.*.local
 # Coverage
+coverage/
 **/frontend/coverage/
 # Storybook
 **/frontend/storybook-static/
@@ -83,8 +98,15 @@ logs/
 ##agentscope
 .agentscope/
 
+## company platform local runtime config
+.company-platform/
+company-platform/workspace/
+company-platform/data/
+
 ## harness db
 **/*.db
+**/*.db-shm
+**/*.db-wal
 
 ## oh-my-claudecode
 .omc/

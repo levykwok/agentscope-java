@@ -1,0 +1,213 @@
+Heading 1	引言
+Heading 2	编写目的
+Heading 2	术语定义
+Heading 2	版本基线
+Heading 2	参考资料
+Heading 1	模块规划设计
+Heading 2	模块列表
+Heading 2	模块间逻辑关系
+Heading 2	功能需求概要
+Heading 2	性能需求
+Heading 2	限制条件
+Heading 1	XX模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 2	关键技术设计
+Heading 2	数据结构设计
+Heading 2	接口和依赖
+Heading 2	数据库存储结构设计
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	MCP管理模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 3	MCP Server 注册流程
+Heading 3	连接校验与健康检测流程
+Heading 3	MCP Tool 发现与同步流程
+Heading 3	MCP Tool 元数据维护流程
+Heading 3	MCP Server 与 Tool 启停流程
+Heading 3	MCP Tool 与 AgentSpec 绑定流程
+Heading 3	运行时加载 MCP Tool 流程
+Heading 3	MCP Tool 调用记录关联流程
+Heading 2	关键技术设计
+Heading 3	MCP Server 接入配置管理
+Heading 3	MCP Tool 发现与元数据同步技术
+Heading 3	工具绑定与运行时可见性控制
+Heading 3	连接凭据安全管理
+Heading 3	工具风险属性与调用控制支撑
+Heading 3	工具调用结果追溯支撑
+Heading 2	数据结构设计
+Heading 3	MCPServer
+Heading 3	MCPTool
+Heading 3	MCPToolBindingConfig
+Heading 3	MCPToolSet
+Heading 3	数据结构关系
+Heading 2	接口和依赖
+Heading 3	对外管理接口
+Heading 3	平台内部接口
+Heading 3	依赖接口和上下游关系
+Heading 3	第三方依赖说明
+Heading 2	数据库存储结构设计
+Heading 3	mcp_server 表
+Heading 3	mcp_tool 表
+Heading 3	mcp_server_check 表
+Heading 3	mcp_tool_sync_log 表
+Heading 3	兼容性说明
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	Skill管理模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 3	Skill 注册与解析流程
+Heading 3	Skill 测试与发布流程
+Heading 3	Skill 版本变更流程
+Heading 3	Skill 启停与废弃流程
+Heading 3	Skill 与 AgentSpec 绑定流程
+Heading 3	运行时加载流程
+Heading 3	Skill 调用记录关联流程
+Heading 2	关键技术设计
+Heading 3	Skill 标准化描述技术
+Heading 3	Skill 包解析与资源引用技术
+Heading 3	Skill 版本固化技术
+Heading 3	依赖解析与可用性校验技术
+Heading 3	运行时 SkillBox 加载技术
+Heading 3	Skill 安全控制技术
+Heading 3	Skill 与运行记录追溯技术
+Heading 2	数据结构设计
+Heading 3	Skill
+Heading 3	SkillVersion
+Heading 3	SkillDependency
+Heading 3	SkillBinding
+Heading 3	SkillBox
+Heading 3	SkillTestResult
+Heading 2	接口和依赖
+Heading 3	对外管理接口
+Heading 3	平台内部接口
+Heading 3	依赖接口和上下游关系
+Heading 2	数据库存储结构设计
+Heading 3	skill 表
+Heading 3	skill_version 表
+Heading 3	skill_dependency 表
+Heading 3	skill_test_result 表
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	会话管理模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 3	会话创建流程
+Heading 3	AgentRun 前上下文恢复流程
+Heading 3	AgentRun 后消息与运行过程保存流程
+Heading 3	会话摘要流程
+Heading 2	关键技术设计
+Heading 3	后端会话状态管理
+Heading 3	上下文裁剪与拼装策略
+Heading 3	会话摘要压缩技术
+Heading 3	消息引用存储与大内容管理
+Heading 3	会话附件的 RAG 检索复用机制
+Heading 3	权限隔离与安全控制
+Heading 3	技术实现路线与验证方式
+Heading 2	数据结构设计
+Heading 3	ChatSession
+Heading 3	ChatMessage
+Heading 3	SessionSummary
+Heading 3	ConversationContext
+Heading 3	AgentRun
+Heading 3	AgentRunEvent
+Heading 3	AgentToolCall
+Heading 2	接口和依赖
+Heading 3	对外接口
+Heading 3	平台内部接口
+Heading 3	依赖接口和上下游关系
+Heading 2	数据库存储结构设计
+Heading 3	chat_session 表
+Heading 3	chat_message 表
+Heading 3	session_summary 表
+Heading 3	agent_run 表
+Heading 3	agent_run_event 表
+Heading 3	agent_tool_call 表
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	记忆管理模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 3	长期记忆检索与注入流程
+Heading 3	长期记忆提取与写入流程
+Heading 3	长期记忆维护流程
+Heading 2	关键技术设计
+Heading 3	长期记忆提取技术
+Heading 3	记忆可信度评估技术
+Heading 3	记忆冲突与合并技术
+Heading 3	记忆检索与排序技术
+Heading 3	记忆注入控制技术
+Heading 3	数据失效与降级处理
+Heading 2	数据结构设计
+Heading 3	AgentMemory
+Heading 3	MemoryRetrievalResult
+Heading 3	数据结构关系
+Heading 2	接口和依赖
+Heading 3	对外接口
+Heading 3	平台内部接口
+Heading 3	依赖接口和上下游关系
+Heading 3	模型和第三方依赖
+Heading 3	接口安全、兼容性和异常处理
+Heading 2	数据库存储结构设计
+Heading 3	Agent_memory 表
+Heading 3	状态流转设计
+Heading 3	向量索引设计
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	运行时模块设计说明
+Heading 2	程序及功能设计
+Heading 2	性能设计
+Heading 2	流程设计
+Heading 3	AgentHandle 获取流程
+Heading 3	本轮上下文构建流程
+Heading 3	运行资源装配流程
+Heading 3	统一执行流程
+Heading 3	用户输入等待与恢复流程
+Heading 3	运行事件与记录流程
+Heading 3	异常处理流程
+Heading 2	关键技术设计
+Heading 3	AgentSpec 快照与运行实例缓存技术
+Heading 3	上下文构建与输入裁剪技术
+Heading 3	运行资源装配与可见性控制技术
+Heading 3	统一执行与能力调用技术
+Heading 3	流式输出技术
+Heading 3	用户输入等待与恢复技术
+Heading 3	运行状态监控与记录调用技术
+Heading 3	异常分级与降级处理技术
+Heading 2	数据结构设计
+Heading 3	AgentRuntimeContext
+Heading 3	AgentHandle
+Heading 3	AgentInput
+Heading 3	AgentExecutionResult
+Heading 3	AgentRunEvent
+Heading 2	接口和依赖
+Heading 3	对外提供接口
+Heading 3	调用平台内部接口
+Heading 3	第三方依赖
+Heading 3	接口安全与兼容性设计
+Heading 3	RuntimeStepContext
+Heading 3	RuntimeWaitingContext
+Heading 3	数据结构关系
+Heading 2	数据库存储结构设计
+Heading 2	人机交互设计
+Heading 2	配置文件和模型
+Heading 2	异常校验和日志
+Heading 2	关键测试点
+Heading 1	模块二设计说明

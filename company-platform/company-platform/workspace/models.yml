@@ -1,0 +1,52 @@
+models:
+  # 本地离线回显模型（默认使用）
+  - modelId: mock
+    type: local
+    className: com.company.platform.model.MockModel
+    description: 本地离线回显模型，用于无 API Key 情况下联调
+    enabled: true
+
+  # OpenAI 标准模型（使用内置 provider 解析）
+  - modelId: openai:gpt-mock
+    type: provider
+    provider: openai
+    model: gpt-4o-mini
+    apiKeyEnv: OPENAI_API_KEY
+    description: OpenAI 示例模型配置（需要 OPENAI_API_KEY）
+    enabled: false
+
+  # OpenAI 兼容协议：自定义 baseUrl / endpoint / headers / body
+  - modelId: openai:custom-endpoint
+    type: provider
+    provider: openai
+    model: qwen-plus
+    baseUrl: ${COMPANY_OPENAI_BASE_URL:https://api.openai.com}
+    endpointPath: /v1/chat/completions
+    apiKeyEnv: OPENAI_API_KEY
+    formatterClass: io.agentscope.core.formatter.openai.OpenAIChatFormatter
+    stream: true
+    additionalHeaders:
+      X-Project-Id: ${OPENAI_PROJECT_ID:}
+    additionalBodyParams:
+      top_p: 0.85
+      temperature: 0.2
+    executionTimeoutMs: 300000
+    executionMaxAttempts: 3
+    executionInitialBackoffMs: 500
+    executionMaxBackoffMs: 5000
+    executionBackoffMultiplier: 2.0
+    description: OpenAI 兼容协议示例（支持自定义请求参数）
+    enabled: false
+
+  # DashScope 示例（仍可继续走内置 provider）
+  - modelId: dashscope:qwen-mock
+    type: provider
+    provider: dashscope
+    model: qwen-plus
+    description: DashScope 示例模型配置（需要 DASHSCOPE_API_KEY）
+    enabled: false
+
+  # 自定义协议扩展（需要你实现 Model 或 ModelRegistry.ModelFactory）
+  # type: provider
+  # modelFactoryClass: com.company.platform.model.MyCustomModelFactory
+  # enabled: false
