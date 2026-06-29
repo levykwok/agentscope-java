@@ -61,6 +61,12 @@ public class YamlMcpRegistry implements McpRegistry {
         persist();
     }
 
+    @Override
+    public void delete(String mcpId) {
+        servers.remove(mcpId);
+        persist();
+    }
+
     private McpSpec toSpec(McpConfig cfg) {
         return new McpSpec(
                 cfg.mcpId(),
@@ -72,8 +78,8 @@ public class YamlMcpRegistry implements McpRegistry {
                 cfg.headers(),
                 cfg.queryParams(),
                 cfg.enableTools(),
-                cfg.timeout(),
-                cfg.initializationTimeout(),
+                duration(cfg.timeout()),
+                duration(cfg.initializationTimeout()),
                 cfg.enabled());
     }
 
@@ -93,6 +99,31 @@ public class YamlMcpRegistry implements McpRegistry {
                 spec.enabled());
     }
 
+    private java.time.Duration duration(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return java.time.Duration.ofMillis(number.longValue());
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isBlank()) {
+            return null;
+        }
+        if (text.matches("\\d+")) {
+            return java.time.Duration.ofMillis(Long.parseLong(text));
+        }
+        if (text.endsWith("ms")) {
+            return java.time.Duration.ofMillis(
+                    Long.parseLong(text.substring(0, text.length() - 2)));
+        }
+        if (text.endsWith("s")) {
+            return java.time.Duration.ofSeconds(
+                    Long.parseLong(text.substring(0, text.length() - 1)));
+        }
+        return java.time.Duration.parse(text);
+    }
+
     private McpConfig toConfig(McpSpec spec) {
         return new McpConfig(
                 spec.mcpId(),
@@ -104,8 +135,10 @@ public class YamlMcpRegistry implements McpRegistry {
                 spec.headers(),
                 spec.queryParams(),
                 spec.enableTools(),
-                spec.timeout(),
-                spec.initializationTimeout(),
+                spec.timeout() == null ? null : spec.timeout().toMillis(),
+                spec.initializationTimeout() == null
+                        ? null
+                        : spec.initializationTimeout().toMillis(),
                 spec.enabled());
     }
 
@@ -156,7 +189,7 @@ public class YamlMcpRegistry implements McpRegistry {
             java.util.Map<String, String> headers,
             java.util.Map<String, String> queryParams,
             List<String> enableTools,
-            java.time.Duration timeout,
-            java.time.Duration initializationTimeout,
+            Long timeout,
+            Long initializationTimeout,
             boolean enabled) {}
 }

@@ -41,15 +41,18 @@ public class PlatformFrontendCompatibilityController {
     private final PlatformCompatibilityState state;
     private final AgentRuntime runtime;
     private final EmbeddingModelRegistry embeddingModelRegistry;
+    private final McpToolDiscoveryService mcpToolDiscoveryService;
     private final WebClient webClient = WebClient.builder().build();
 
     public PlatformFrontendCompatibilityController(
             PlatformCompatibilityState state,
             AgentRuntime runtime,
-            EmbeddingModelRegistry embeddingModelRegistry) {
+            EmbeddingModelRegistry embeddingModelRegistry,
+            McpToolDiscoveryService mcpToolDiscoveryService) {
         this.state = state;
         this.runtime = runtime;
         this.embeddingModelRegistry = embeddingModelRegistry;
+        this.mcpToolDiscoveryService = mcpToolDiscoveryService;
     }
 
     @GetMapping("/infra/health")
@@ -104,6 +107,14 @@ public class PlatformFrontendCompatibilityController {
         return state.agentSpec(agentId);
     }
 
+    @PutMapping("/agents/{agentId}/spec")
+    public Map<String, Object> saveAgentSpec(
+            @PathVariable String agentId, @RequestBody Map<String, Object> payload) {
+        Map<String, Object> agent = state.saveAgentSpec(agentId, payload);
+        runtime.evict(agentId);
+        return map("ok", true, "item", agent, "agent", agent);
+    }
+
     @PostMapping("/agents")
     public Map<String, Object> upsertAgent(@RequestBody Map<String, Object> payload) {
         Map<String, Object> agent = state.upsertAgent(payload);
@@ -125,6 +136,62 @@ public class PlatformFrontendCompatibilityController {
             @RequestParam(defaultValue = "50") int limit) {
         List<Map<String, Object>> rows = state.runs(agent_id, status, limit);
         return map("items", rows, "runs", rows);
+    }
+
+    @PostMapping("/agents/runs")
+    public Mono<Map<String, Object>> createRun(
+            @RequestBody Map<String, Object> payload,
+            @RequestHeader(value = "x-user-id", defaultValue = "platform_admin") String userId,
+            @RequestHeader(value = "x-org-id", defaultValue = "platform") String orgId) {
+        String agentId = string(payload.get("agent_id"), "platform_knowledge_agent");
+        Map<String, Object> body = objectMap(payload.get("payload"));
+        String query = string(body.get("query"), string(payload.get("query"), ""));
+        String sessionId = string(payload.get("session_id"), "default");
+        Map<String, Object> run = state.createRun(agentId, query, userId);
+        String runId = string(run.get("run_id"), "");
+        state.appendSessionMessage(agentId, sessionId, userId, "user", query);
+        return runtime.chat(agentId, new ChatRequest(orgId, userId, sessionId, query))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(
+                        response -> {
+                            String answer = string(response.text(), "");
+                            Map<String, Object> finished = state.finishRun(runId, answer);
+                            boolean succeeded = "succeeded".equals(finished.get("status"));
+                            state.appendSessionMessage(
+                                    agentId, sessionId, userId, "assistant", answer);
+                            return map(
+                                    "ok",
+                                    succeeded,
+                                    "run",
+                                    finished,
+                                    "run_id",
+                                    finished.get("run_id"),
+                                    "status",
+                                    finished.get("status"),
+                                    "answer",
+                                    answer,
+                                    "result",
+                                    map("answer", answer, "text", answer));
+                        })
+                .onErrorResume(
+                        error -> {
+                            Map<String, Object> failed = state.failRun(runId, error);
+                            String message = string(error.getMessage(), "执行失败");
+                            return Mono.just(
+                                    map(
+                                            "ok",
+                                            false,
+                                            "run",
+                                            failed,
+                                            "run_id",
+                                            failed.get("run_id"),
+                                            "status",
+                                            failed.get("status"),
+                                            "error",
+                                            message,
+                                            "result",
+                                            map("error", message)));
+                        });
     }
 
     @GetMapping("/agents/runs/{runId}")
@@ -197,7 +264,8 @@ public class PlatformFrontendCompatibilityController {
     @PutMapping("/tools/bindings/{toolId}")
     public Map<String, Object> toolBinding(
             @PathVariable String toolId, @RequestBody Map<String, Object> payload) {
-        return map("ok", true, "tool_id", toolId, "binding", payload);
+        Map<String, Object> binding = state.saveToolBinding(toolId, payload);
+        return map("ok", true, "tool_id", toolId, "binding", binding);
     }
 
     @PutMapping("/tools/agents/{agentId}/policies/{toolId}")
@@ -225,12 +293,50 @@ public class PlatformFrontendCompatibilityController {
     public Map<String, Object> testTool(
             @PathVariable String toolId,
             @RequestBody(required = false) Map<String, Object> payload) {
-        return map("ok", true, "tool_id", toolId, "latency_ms", 1, "result_preview", "compat ok");
+        Instant started = Instant.now();
+        if (!toolId.startsWith("mcp:")) {
+            return map(
+                    "ok",
+                    false,
+                    "tool_id",
+                    toolId,
+                    "error",
+                    "Only MCP tools can be tested by this endpoint.");
+        }
+        String[] parts = toolId.split(":", 3);
+        if (parts.length < 3) {
+            return map("ok", false, "tool_id", toolId, "error", "Invalid MCP tool id.");
+        }
+        String serverId = parts[1];
+        String toolName = parts[2];
+        Map<String, Object> server =
+                state.mcpServers().stream()
+                        .filter(row -> serverId.equals(String.valueOf(row.get("id"))))
+                        .findFirst()
+                        .orElse(null);
+        if (server == null) {
+            return map(
+                    "ok", false, "tool_id", toolId, "error", "MCP server not found: " + serverId);
+        }
+        Map<String, Object> args = objectMap(payload == null ? null : payload.get("arguments"));
+        Map<String, Object> result = mcpToolDiscoveryService.callTool(server, toolName, args);
+        long latency = Duration.between(started, Instant.now()).toMillis();
+        return map(
+                "ok",
+                result.getOrDefault("ok", false),
+                "tool_id",
+                toolId,
+                "latency_ms",
+                latency,
+                "result",
+                result.get("result"),
+                "result_preview",
+                result.getOrDefault("result_preview", ""));
     }
 
     @GetMapping("/tools/{toolId}/schema-snapshots")
     public Map<String, Object> schemaSnapshots(@PathVariable String toolId) {
-        return map("items", List.of());
+        return map("items", state.toolSchemaSnapshots(toolId));
     }
 
     @GetMapping("/tools/audit")
@@ -258,24 +364,31 @@ public class PlatformFrontendCompatibilityController {
 
     @DeleteMapping("/mcp/{id}")
     public Map<String, Object> deleteMcp(@PathVariable String id) {
+        state.deleteMcpServer(id);
         return map("ok", true, "id", id);
     }
 
     @PostMapping("/mcp/probe")
     public Map<String, Object> probeMcp(
             @RequestBody(required = false) Map<String, Object> payload) {
-        Map<String, Object> probe = state.probe(payload == null ? Map.of() : payload);
+        Map<String, Object> probe =
+                mcpToolDiscoveryService.probe(payload == null ? Map.of() : payload);
         return map("probe", probe);
     }
 
     @PostMapping("/mcp/{id}/probe")
     public Map<String, Object> probeMcpById(@PathVariable String id) {
-        Map<String, Object> probe = state.probe(map("endpoint", id));
-        return map(
-                "probe",
-                probe,
-                "server",
-                map("id", id, "metadata", map("health_status", "healthy")));
+        Map<String, Object> server =
+                state.mcpServers().stream()
+                        .filter(row -> id.equals(String.valueOf(row.get("id"))))
+                        .findFirst()
+                        .orElse(null);
+        if (server == null) {
+            return state.updateMcpProbe(
+                    id,
+                    map("ok", false, "stage", "lookup", "error", "MCP server not found: " + id));
+        }
+        return state.updateMcpProbe(id, mcpToolDiscoveryService.probe(server));
     }
 
     @GetMapping("/mcp/{id}/tools")
@@ -285,7 +398,8 @@ public class PlatformFrontendCompatibilityController {
                         .filter(row -> id.equals(String.valueOf(row.get("id"))))
                         .findFirst()
                         .orElseGet(() -> map("id", id, "name", "mcp-" + id));
-        List<Map<String, Object>> rows = state.mcpTools(server);
+        List<Map<String, Object>> rows = mcpToolDiscoveryService.discover(server);
+        rows = state.enrichTools(rows);
         return map("items", rows, "tools", rows);
     }
 
@@ -379,17 +493,7 @@ public class PlatformFrontendCompatibilityController {
     public Map<String, Object> modelSchema() {
         return map(
                 "provider_types",
-                List.of(
-                        "openai",
-                        "openai-compatible",
-                        "gpustack",
-                        "vllm",
-                        "ollama",
-                        "http_chat",
-                        "dashscope",
-                        "mock",
-                        "echo",
-                        "custom"),
+                List.of("openai-compatible", "http_chat", "ollama", "dashscope", "mock"),
                 "model_kinds",
                 List.of("chat", "embedding", "rerank"),
                 "provider_call_types",
@@ -547,7 +651,7 @@ public class PlatformFrontendCompatibilityController {
         if (baseUrl.isBlank()) {
             return Mono.just(map("ok", false, "model_id", id, "error", "base_url is required"));
         }
-        if (apiKey.isBlank()) {
+        if (apiKey.isBlank() && !"http_chat".equals(providerType)) {
             return Mono.just(
                     map("ok", false, "model_id", id, "error", "secret_ref/api key is required"));
         }
@@ -555,6 +659,9 @@ public class PlatformFrontendCompatibilityController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", modelName);
         body.put("messages", List.of(map("role", "user", "content", prompt)));
+        body.put("prompt", prompt);
+        body.put("query", prompt);
+        body.put("input", prompt);
         body.put("stream", false);
         body.put("thinking", map("type", "disabled"));
         body.putAll(objectMap(model.get("extra_body")));
@@ -570,8 +677,10 @@ public class PlatformFrontendCompatibilityController {
                 webClient
                         .post()
                         .uri(resolveRequestUrl(baseUrl, endpointPath, providerType))
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                         .contentType(MediaType.APPLICATION_JSON);
+        if (!apiKey.isBlank()) {
+            request.header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey);
+        }
         objectMap(model.get("extra_headers"))
                 .forEach(
                         (key, value) -> {
@@ -1058,11 +1167,17 @@ public class PlatformFrontendCompatibilityController {
         if ("dashscope".equals(providerType)) {
             return "/compatible-mode/v1/chat/completions";
         }
-        return "/chat/completions";
+        if ("mock".equals(providerType) || "echo".equals(providerType)) {
+            return "";
+        }
+        if (isOpenAiCompatibleProvider(providerType)) {
+            return "/chat/completions";
+        }
+        return "";
     }
 
     private static boolean isOpenAiCompatibleProvider(String providerType) {
-        return List.of("openai", "openai-compatible", "gpustack", "vllm").contains(providerType);
+        return List.of("openai-compatible", "openai_compatible", "openai").contains(providerType);
     }
 
     private static boolean hasEndpoint(String baseUrl) {

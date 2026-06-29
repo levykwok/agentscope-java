@@ -10,4 +10,6 @@ public interface AgentRuntime {
     Mono<ChatResponse> chat(String agentId, ChatRequest request);
 
     Flux<AgentEventEnvelope> stream(String agentId, ChatRequest request);
+
+    void evict(String agentId);
 }

@@ -3,6 +3,7 @@
  */
 package com.company.platform.control;
 
+import com.company.platform.model.HttpChatModel;
 import io.agentscope.core.embedding.EmbeddingModel;
 import io.agentscope.core.embedding.dashscope.DashScopeTextEmbedding;
 import io.agentscope.core.embedding.ollama.OllamaTextEmbedding;
@@ -40,10 +41,15 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
     private final Map<String, ModelSpec> models = new ConcurrentHashMap<>();
     private final Map<String, EmbeddingModel> embeddingModels = new ConcurrentHashMap<>();
     private final PlatformConfigStore configStore;
+    private final ModelProviderRegistry providerRegistry;
     private final Environment environment;
 
-    public YamlModelConfigRegistry(PlatformConfigStore configStore, Environment environment) {
+    public YamlModelConfigRegistry(
+            PlatformConfigStore configStore,
+            ModelProviderRegistry providerRegistry,
+            Environment environment) {
         this.configStore = configStore;
+        this.providerRegistry = providerRegistry;
         this.environment = environment;
     }
 
@@ -225,6 +231,10 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
                     ModelRegistry.register(spec.modelId(), buildOpenAIModel(spec));
                     return;
                 }
+                if ("http_chat".equals(resolveProvider(spec).type())) {
+                    ModelRegistry.register(spec.modelId(), buildHttpChatModel(spec));
+                    return;
+                }
                 ModelRegistry.register(
                         spec.modelId(), ModelRegistry.resolve(resolveModelRef(spec)));
                 return;
@@ -237,53 +247,56 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
     }
 
     private EmbeddingModel buildEmbeddingModel(ModelSpec spec) {
-        String provider = safe(spec.provider()).toLowerCase();
+        ResolvedProvider provider = resolveProvider(spec);
         String modelName = resolveModelName(spec);
         int dimensions = resolveDimensions(spec);
         ExecutionConfig executionConfig = buildExecutionConfig(spec);
-        if (OPENAI_PROVIDERS.contains(provider)) {
+        if (OPENAI_PROVIDERS.contains(provider.type())) {
             OpenAITextEmbedding.Builder builder =
                     OpenAITextEmbedding.builder()
                             .modelName(modelName)
                             .dimensions(dimensions)
                             .executionConfig(executionConfig);
-            String apiKey = resolveApiKey(spec, "openai");
+            String apiKey = resolveApiKey(spec, provider);
             if (!apiKey.isBlank()) {
                 builder.apiKey(apiKey);
             }
-            if (!safe(spec.baseUrl()).isBlank()) {
-                builder.baseUrl(spec.baseUrl());
+            if (!provider.baseUrl().isBlank()) {
+                builder.baseUrl(provider.baseUrl());
             }
             return builder.build();
         }
-        if ("dashscope".equals(provider) || "qwen".equals(provider)) {
+        if ("dashscope".equals(provider.type()) || "qwen".equals(provider.type())) {
             DashScopeTextEmbedding.Builder builder =
                     DashScopeTextEmbedding.builder()
                             .modelName(modelName)
                             .dimensions(dimensions)
                             .executionConfig(executionConfig);
-            String apiKey = resolveApiKey(spec, "dashscope");
+            String apiKey = resolveApiKey(spec, provider);
             if (!apiKey.isBlank()) {
                 builder.apiKey(apiKey);
             }
-            if (!safe(spec.baseUrl()).isBlank()) {
-                builder.baseUrl(spec.baseUrl());
+            if (!provider.baseUrl().isBlank()) {
+                builder.baseUrl(provider.baseUrl());
             }
             return builder.build();
         }
-        if ("ollama".equals(provider)) {
+        if ("ollama".equals(provider.type())) {
             OllamaTextEmbedding.Builder builder =
                     OllamaTextEmbedding.builder()
                             .modelName(modelName)
                             .dimensions(dimensions)
                             .executionConfig(executionConfig);
-            if (!safe(spec.baseUrl()).isBlank()) {
-                builder.baseUrl(spec.baseUrl());
+            if (!provider.baseUrl().isBlank()) {
+                builder.baseUrl(provider.baseUrl());
             }
             return builder.build();
         }
         throw new IllegalStateException(
-                "Unsupported embedding provider for " + spec.modelId() + ": " + spec.provider());
+                "Unsupported embedding provider type for "
+                        + spec.modelId()
+                        + ": "
+                        + provider.type());
     }
 
     private int resolveDimensions(ModelSpec spec) {
@@ -294,7 +307,7 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
             }
             return spec.dimensions();
         }
-        return switch (safe(spec.provider()).toLowerCase()) {
+        return switch (resolveProvider(spec).type()) {
             case "openai", "openai-compatible", "openai_compatible" -> 1536;
             case "dashscope", "qwen" -> 1024;
             case "ollama" -> -1;
@@ -319,10 +332,11 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
     }
 
     private Model buildOpenAIModel(ModelSpec spec) {
+        ResolvedProvider provider = resolveProvider(spec);
         String modelName = resolveModelName(spec);
-        String apiKey = resolveApiKey(spec, "openai");
-        String baseUrl = safe(spec.baseUrl());
-        String endpointPath = safe(spec.endpointPath());
+        String apiKey = resolveApiKey(spec, provider);
+        String baseUrl = provider.baseUrl();
+        String endpointPath = provider.endpointPath();
         Formatter<OpenAIMessage, OpenAIResponse, OpenAIRequest> formatter =
                 resolveFormatter(spec.formatterClass());
 
@@ -351,6 +365,19 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
                 buildGenerateOptions(spec, modelName, apiKey, baseUrl, endpointPath);
         builder.generateOptions(options);
         return builder.build();
+    }
+
+    private Model buildHttpChatModel(ModelSpec spec) {
+        ResolvedProvider provider = resolveProvider(spec);
+        return new HttpChatModel(
+                resolveModelName(spec),
+                provider.baseUrl(),
+                resolveApiKey(spec, provider),
+                spec.additionalHeaders(),
+                spec.additionalBodyParams(),
+                spec.executionTimeoutMs() == null
+                        ? null
+                        : Duration.ofMillis(spec.executionTimeoutMs()));
     }
 
     private GenerateOptions buildGenerateOptions(
@@ -472,7 +499,7 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
         };
     }
 
-    private String resolveApiKey(ModelSpec spec, String provider) {
+    private String resolveApiKey(ModelSpec spec, ResolvedProvider provider) {
         String key = safe(spec.apiKey());
         if (!key.isBlank()) {
             return key;
@@ -482,7 +509,16 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
             String byEnv = System.getenv(apiKeyEnv);
             return byEnv == null ? "" : byEnv;
         }
-        String env = defaultApiKeyEnv(provider);
+        String secretRef = safe(provider.secretRef());
+        if (secretRef.startsWith("env:")) {
+            String byEnv = System.getenv(secretRef.substring(4));
+            return byEnv == null ? "" : byEnv;
+        }
+        if (!secretRef.isBlank()) {
+            String byEnv = System.getenv(secretRef);
+            return byEnv == null || byEnv.isBlank() ? secretRef : byEnv;
+        }
+        String env = defaultApiKeyEnv(provider.type());
         if (env == null) {
             return "";
         }
@@ -520,8 +556,9 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
     }
 
     private boolean shouldUseOpenAIChatModel(ModelSpec spec) {
-        if (OPENAI_PROVIDERS.contains(spec.provider())) {
-            if (!"openai".equals(spec.provider())) {
+        ResolvedProvider provider = resolveProvider(spec);
+        if (OPENAI_PROVIDERS.contains(provider.type())) {
+            if (!"openai".equals(provider.type())) {
                 return true;
             }
             if (!safe(spec.baseUrl()).isBlank()
@@ -555,6 +592,35 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
             }
         }
         return false;
+    }
+
+    private ResolvedProvider resolveProvider(ModelSpec spec) {
+        String providerId = safe(spec.provider());
+        Optional<ModelProviderSpec> configured = providerRegistry.find(providerId);
+        String type = configured.map(ModelProviderSpec::providerType).orElse(providerId);
+        String baseUrl =
+                firstText(
+                        spec.baseUrl(),
+                        configured.map(ModelProviderSpec::defaultBaseUrl).orElse(""));
+        String endpointPath =
+                firstText(
+                        spec.endpointPath(),
+                        configured.map(ModelProviderSpec::endpointPath).orElse(""));
+        String secretRef = configured.map(ModelProviderSpec::secretRef).orElse("");
+        return new ResolvedProvider(
+                providerId,
+                safe(type).toLowerCase(),
+                safe(baseUrl),
+                safe(endpointPath),
+                safe(secretRef));
+    }
+
+    private static String firstText(String first, String second) {
+        String value = first == null ? "" : first.strip();
+        if (!value.isBlank()) {
+            return value;
+        }
+        return second == null ? "" : second.strip();
     }
 
     private String resolveModelName(ModelSpec spec) {
@@ -766,4 +832,7 @@ public class YamlModelConfigRegistry implements ModelConfigRegistry, EmbeddingMo
             Integer dimensions,
             String description,
             boolean enabled) {}
+
+    private record ResolvedProvider(
+            String id, String type, String baseUrl, String endpointPath, String secretRef) {}
 }

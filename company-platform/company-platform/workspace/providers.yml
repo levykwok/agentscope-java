@@ -1,10 +1,20 @@
+---
 providers:
-  - providerId: openai-compatible
-    displayName: OpenAI 兼容协议
-    providerType: openai-compatible
-    defaultBaseUrl: https://api.deepseek.com
-    endpointPath: /chat/completions
-    secretRef: ""
-    timeoutMs: 30000
-    description: OpenAI 兼容协议供应商，可配置 DeepSeek/GPUStack/vLLM 等服务
-    status: active
+- providerId: "deepseek"
+  displayName: "deepseek"
+  providerType: "http_chat"
+  defaultBaseUrl: "https://api.deepseek.com/chat/completions"
+  endpointPath: ""
+  secretRef: "sk-0f4a65ea1e9548aeb9268a53d7a97cbf"
+  timeoutMs: 30000
+  description: ""
+  status: "active"
+- providerId: "ollama"
+  displayName: "ollama"
+  providerType: "ollama"
+  defaultBaseUrl: "http://localhost:11434"
+  endpointPath: ""
+  secretRef: ""
+  timeoutMs: 30000
+  description: ""
+  status: "active"

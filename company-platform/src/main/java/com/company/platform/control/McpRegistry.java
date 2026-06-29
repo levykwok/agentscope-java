@@ -12,4 +12,6 @@ public interface McpRegistry {
     Optional<McpSpec> find(String mcpId);
 
     void upsert(McpSpec spec);
+
+    void delete(String mcpId);
 }

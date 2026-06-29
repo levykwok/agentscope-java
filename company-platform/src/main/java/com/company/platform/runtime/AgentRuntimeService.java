@@ -57,6 +57,12 @@ public class AgentRuntimeService implements AgentRuntime {
         return agent(definition).streamEvents(request.message(), context).map(this::envelope);
     }
 
+    @Override
+    public void evict(String agentId) {
+        String prefix = agentId + ":";
+        agentCache.keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
     private Mono<ChatResponse> runSingle(AgentDefinition definition, ChatRequest request) {
         RuntimeContext context = runtimeContext(request);
         return agent(definition)
@@ -90,7 +96,7 @@ public class AgentRuntimeService implements AgentRuntime {
                 new ChatRequest(
                         request.tenantId(),
                         request.userId(),
-                        sessionKey(request) + ":" + step.stepId(),
+                        sessionKey(request) + "_" + pathSafe(step.stepId(), "step"),
                         message);
         return runSingle(stepAgent, stepRequest).map(ChatResponse::text);
     }
@@ -150,14 +156,19 @@ public class AgentRuntimeService implements AgentRuntime {
     private String userKey(ChatRequest request) {
         String tenant = safe(request.tenantId(), "default");
         String user = safe(request.userId(), "anonymous");
-        return tenant + ":" + user;
+        return pathSafe(tenant + "_" + user, "default_anonymous");
     }
 
     private String sessionKey(ChatRequest request) {
-        return safe(request.sessionId(), "default");
+        return pathSafe(request.sessionId(), "default");
     }
 
     private String safe(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String pathSafe(String value, String fallback) {
+        String text = safe(value, fallback).replaceAll("[^A-Za-z0-9._-]", "_");
+        return text.isBlank() ? fallback : text;
     }
 }

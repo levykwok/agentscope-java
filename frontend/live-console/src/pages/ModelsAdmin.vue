@@ -108,15 +108,16 @@ function defaultEndpointPath(providerType: unknown) {
   if (type === 'ollama') return '/api/chat'
   if (type === 'http_chat') return ''
   if (type === 'dashscope') return '/compatible-mode/v1/chat/completions'
-  if (['openai', 'openai-compatible', 'gpustack', 'vllm'].includes(type)) return '/chat/completions'
-  return '/chat/completions'
+  if (['openai-compatible', 'openai_compatible', 'openai'].includes(type)) return '/chat/completions'
+  if (['mock', 'echo'].includes(type)) return ''
+  return ''
 }
 function defaultEndpointPathForCall(providerType: unknown, callType: unknown) {
   const type = String(providerType || '').trim()
   const call = String(callType || 'generate').trim()
   if (call === 'embed') {
     if (type === 'ollama') return '/api/embeddings'
-    if (['openai', 'openai-compatible', 'gpustack', 'vllm'].includes(type)) return '/embeddings'
+    if (['openai-compatible', 'openai_compatible', 'openai'].includes(type)) return '/embeddings'
   }
   return defaultEndpointPath(type)
 }
@@ -132,7 +133,7 @@ function requestUrl(base: unknown, endpointPath: unknown, providerType: unknown)
   if (!root) return ''
   if (baseAlreadyHasEndpoint(root) || !path) return root
   const type = String(providerType || '').trim()
-  if (['openai', 'openai-compatible', 'gpustack', 'vllm'].includes(type) && !/\/v1(\/|$)/.test(root)) {
+  if (['openai-compatible', 'openai_compatible', 'openai'].includes(type) && !/\/v1(\/|$)/.test(root)) {
     return `${root}/v1${path.startsWith('/') ? path : `/${path}`}`
   }
   if (!path) return root
@@ -149,19 +150,19 @@ function maskSecret(value: unknown) {
 /* ═══ PROVIDERS ═══ */
 const providerEditing = ref(false)
 const providerIsNew = ref(false)
-const providerForm = reactive({ provider_id: '', display_name: '', provider_type: 'openai', default_base_url: '', endpoint_path: '', secret_ref: '', timeout_ms: 30000, extra_config: '{}', description: '', status: 'active' })
+const providerForm = reactive({ provider_id: '', display_name: '', provider_type: 'openai-compatible', default_base_url: '', endpoint_path: '', secret_ref: '', timeout_ms: 30000, extra_config: '{}', description: '', status: 'active' })
 
 function modelsForProvider(providerId: string) { return models.value.filter((m) => m.provider_id === providerId) }
 
 function startNewProvider() {
   providerIsNew.value = true
-  Object.assign(providerForm, { provider_id: '', display_name: '', provider_type: schema.provider_types[0] || 'openai', default_base_url: '', endpoint_path: '', secret_ref: '', timeout_ms: 30000, extra_config: '{}', description: '', status: 'active' })
+  Object.assign(providerForm, { provider_id: '', display_name: '', provider_type: schema.provider_types[0] || 'openai-compatible', default_base_url: '', endpoint_path: '', secret_ref: '', timeout_ms: 30000, extra_config: '{}', description: '', status: 'active' })
   providerEditing.value = true
 }
 function startEditProvider(p: JsonMap) {
   providerIsNew.value = false
   Object.assign(providerForm, {
-    provider_id: p.provider_id, display_name: p.display_name || '', provider_type: p.provider_type || 'openai',
+    provider_id: p.provider_id, display_name: p.display_name || '', provider_type: p.provider_type || 'openai-compatible',
     default_base_url: p.default_base_url || '', endpoint_path: p.endpoint_path || '', secret_ref: '', timeout_ms: p.timeout_ms || 30000,
     extra_config: JSON.stringify(p.extra_config || {}, null, 2), description: p.description || '', status: p.status || 'active',
   })
@@ -244,13 +245,36 @@ const modelSecretSource = computed(() => {
   return modelIsNew.value ? '未配置' : '留空则沿用已保存密钥'
 })
 const modelSecretPreview = computed(() => maskSecret(modelForm.secret_ref || selectedModelProvider.value?.secret_ref || ''))
-const modelRequestBodyPreview = computed(() => JSON.stringify({
-  model: modelForm.model_name || modelForm.model_id || '',
-  messages: [{ role: 'user', content: 'ping' }],
-  stream: false,
-  thinking: { type: 'disabled' },
-  ...rowsToObject(extraBodyRows.value, true),
-}, null, 2))
+const modelRequestBodyPreview = computed(() => {
+  const providerType = String(selectedModelProvider.value?.provider_type || '').trim()
+  const model = modelForm.model_name || modelForm.model_id || ''
+  const extraBody = rowsToObject(extraBodyRows.value, true)
+  if (providerType === 'http_chat') {
+    return JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      prompt: 'ping',
+      query: 'ping',
+      input: 'ping',
+      stream: false,
+      ...extraBody,
+    }, null, 2)
+  }
+  if (providerType === 'ollama') {
+    return JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: false,
+      ...extraBody,
+    }, null, 2)
+  }
+  return JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: 'ping' }],
+    stream: false,
+    ...extraBody,
+  }, null, 2)
+})
 const modelRequestHeadersPreview = computed(() => rowsToObject(extraHeaderRows.value, false))
 
 function addExtraHeaderRow() { extraHeaderRows.value.push({ key: '', value: '' }) }
@@ -690,15 +714,15 @@ onMounted(() => { refresh(); loadDomains() })
       <div class="modal">
         <div class="modal-title">{{ providerIsNew ? '新增供应商' : '编辑供应商' }}</div>
         <div class="form-row">
-          <div class="form-group"><label>Provider ID *</label><input v-model="providerForm.provider_id" :disabled="!providerIsNew" placeholder="gpustack_main" /></div>
-          <div class="form-group"><label>显示名 *</label><input v-model="providerForm.display_name" placeholder="GPUStack 主集群" /></div>
+          <div class="form-group"><label>Provider ID *</label><input v-model="providerForm.provider_id" :disabled="!providerIsNew" placeholder="primary_llm" /></div>
+          <div class="form-group"><label>显示名 *</label><input v-model="providerForm.display_name" placeholder="主力模型服务" /></div>
         </div>
         <div class="form-row">
           <div class="form-group"><label>类型</label><select v-model="providerForm.provider_type"><option v-for="t in schema.provider_types" :key="t" :value="t">{{ t }}</option></select></div>
           <div class="form-group"><label>状态</label><select v-model="providerForm.status"><option v-for="s in schema.statuses" :key="s" :value="s">{{ s }}</option></select></div>
         </div>
         <div class="form-row">
-          <div class="form-group"><label>Base URL</label><input v-model="providerForm.default_base_url" placeholder="http://host:port/v1" /></div>
+          <div class="form-group"><label>Base URL</label><input v-model="providerForm.default_base_url" placeholder="https://host 或 https://host/v1" /></div>
           <div class="form-group"><label>Endpoint Path（留空=按类型默认）</label><input v-model="providerForm.endpoint_path" :placeholder="defaultEndpointPath(providerForm.provider_type)" /></div>
         </div>
         <div class="endpoint-preview">

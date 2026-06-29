@@ -42,12 +42,16 @@ public class AgentRunsCompatibilityController {
         String query = string(body.get("query"), string(payload.get("query"), ""));
         String sessionId = string(payload.get("session_id"), "default");
         Map<String, Object> run = state.createRun(agentId, query, userId);
+        String runId = string(run.get("run_id"), "");
+        state.appendSessionMessage(agentId, sessionId, userId, "user", query);
         return runtime.chat(agentId, new ChatRequest(orgId, userId, sessionId, query))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(response -> string(response.text(), ""))
-                .onErrorReturn("兼容层已收到请求: " + query)
                 .flatMapMany(
                         text -> {
+                            Map<String, Object> finished = state.finishRun(runId, text);
+                            state.appendSessionMessage(
+                                    agentId, sessionId, userId, "assistant", text);
                             return Flux.just(
                                     sse(
                                             "activity",
@@ -70,32 +74,57 @@ public class AgentRunsCompatibilityController {
                                                     "step",
                                                     "respond",
                                                     "title",
-                                                    "生成回答",
+                                                    "AgentScope 生成回答",
                                                     "status",
                                                     "success",
                                                     "summary",
-                                                    "compat")),
+                                                    "agentscope")),
+                                    sse("token", map("type", "token", "delta", text)),
                                     sse(
                                             "done",
                                             map(
                                                     "type",
                                                     "done",
                                                     "run_id",
-                                                    run.get("run_id"),
+                                                    finished.get("run_id"),
                                                     "status",
                                                     "succeeded",
                                                     "trace_id",
-                                                    run.get("trace_id"),
+                                                    finished.get("trace_id"),
                                                     "output_ref",
-                                                    map(
-                                                            "result",
-                                                            map(
-                                                                    "answer",
-                                                                    text,
-                                                                    "text",
-                                                                    text,
-                                                                    "route",
-                                                                    "agentscope")))));
+                                                    finished.get("output_ref"))));
+                        })
+                .onErrorResume(
+                        error -> {
+                            Map<String, Object> failed = state.failRun(runId, error);
+                            String message = string(error.getMessage(), "执行失败");
+                            return Flux.just(
+                                    sse(
+                                            "activity",
+                                            map(
+                                                    "type",
+                                                    "activity",
+                                                    "step",
+                                                    "respond",
+                                                    "title",
+                                                    "AgentScope 调用失败",
+                                                    "status",
+                                                    "failed",
+                                                    "summary",
+                                                    message)),
+                                    sse(
+                                            "error",
+                                            map(
+                                                    "type",
+                                                    "error",
+                                                    "run_id",
+                                                    failed.get("run_id"),
+                                                    "status",
+                                                    "failed",
+                                                    "message",
+                                                    message,
+                                                    "error",
+                                                    message)));
                         })
                 .delayElements(Duration.ofMillis(25));
     }

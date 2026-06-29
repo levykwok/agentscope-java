@@ -57,6 +57,10 @@ const form = reactive({
   included_skills: [] as string[],
   included_tools: [] as string[],
   router_rules: [] as JsonMap[],
+  orchestration_mode: 'SINGLE',
+  orchestration_routes: [] as JsonMap[],
+  workflow_steps: [] as JsonMap[],
+  subagents: [] as JsonMap[],
   model_policy: {} as JsonMap,
   flow_bindings: [] as JsonMap[],
 })
@@ -160,7 +164,7 @@ const flowBindingList = computed(() => (form.flow_bindings as JsonMap[]).filter(
 const modelPolicyList = computed(() => Object.entries(form.model_policy)
   .filter(([slot]) => slot !== 'nodes' && slot !== 'slots')
   .map(([slot, model]) => ({ slot, model: String(model || '') || '跟随默认绑定' })))
-const stepLabels = ['基本信息', 'Flow 绑定', '技能范围', '工具 / MCP', '模型策略', 'Prompt']
+const stepLabels = ['基本信息', '编排', '技能范围', '工具 / MCP', '模型策略', 'Prompt']
 const isBuiltin = computed(() => String(selected.value?.source || 'builtin') === 'builtin')
 const flowKeyOptions = computed(() => form.flow_bindings.map((b) => String(b.key || '')).filter(Boolean))
 const fixedSlotKeys = computed(() => new Set((modelChoices.value.fixed_slots as JsonMap[] || []).map((s) => String(s.slot_key || ''))))
@@ -243,6 +247,7 @@ async function selectAgent(id: string) {
     const wf = (d.workflow_json || {}) as JsonMap
     const a = agents.value.find((x) => x.agent_id === id) || {}
     const wfFlows = (wf.flows || {}) as JsonMap
+    const orchestration = (wf.orchestration || {}) as JsonMap
     const flowBindings = Object.entries(wfFlows).map(([key, v]) => ({ key, flow_id: typeof v === 'string' ? v : ((v as JsonMap)?.flow_id || '') }))
     const pp = (cfg.prompt_policy || {}) as JsonMap
     Object.assign(form, {
@@ -261,6 +266,24 @@ async function selectAgent(id: string) {
         keywords: Array.isArray(r.keywords) ? (r.keywords as string[]).join(', ') : (r.keywords || ''),
         flow_key: r.flow_key || '',
       })),
+      orchestration_mode: orchestration.mode || 'SINGLE',
+      orchestration_routes: ((orchestration.routes as JsonMap[]) || []).map((r) => ({
+        ruleId: r.ruleId || r.rule_id || '',
+        targetAgentId: r.targetAgentId || r.target_agent_id || r.agent_id || '',
+        contains: r.contains || '',
+      })),
+      workflow_steps: ((orchestration.workflow as JsonMap[]) || []).map((s) => ({
+        stepId: s.stepId || s.step_id || '',
+        agentId: s.agentId || s.agent_id || '',
+        instruction: s.instruction || '',
+      })),
+      subagents: ((orchestration.subagents as JsonMap[]) || []).map((s) => ({
+        bindingId: s.bindingId || s.binding_id || '',
+        targetAgentId: s.targetAgentId || s.target_agent_id || s.agent_id || '',
+        role: s.role || '',
+        description: s.description || '',
+        exposeToUser: s.exposeToUser ?? s.expose_to_user ?? true,
+      })),
       model_policy: { ...((cfg.model_policy as JsonMap) || {}) },
       flow_bindings: flowBindings,
     })
@@ -276,7 +299,9 @@ function newAgent() {
   Object.assign(form, {
     agent_id: '', display_name: '', description: '', domain: domainFilter.value || 'platform', enabled: true,
     role: '', planner_rules: '', require_structured_plan: true,
-    included_skills: [], included_tools: [], router_rules: [], model_policy: {}, flow_bindings: [{ key: 'default', flow_id: '' }],
+    included_skills: [], included_tools: [], router_rules: [],
+    orchestration_mode: 'SINGLE', orchestration_routes: [], workflow_steps: [], subagents: [],
+    model_policy: {}, flow_bindings: [{ key: 'default', flow_id: '' }],
   })
   spec.value = null; selectedId.value = ''; step.value = 0; output.value = null
   mcpBindings.value = {}
@@ -293,6 +318,12 @@ function addFlowBinding() { form.flow_bindings.push({ key: '', flow_id: '' }) }
 function removeFlowBinding(i: number) { form.flow_bindings.splice(i, 1) }
 function addRouterRule() { form.router_rules.push({ intent: '', keywords: '', flow_key: form.flow_bindings[0]?.key || '' }) }
 function removeRouterRule(i: number) { form.router_rules.splice(i, 1) }
+function addOrchestrationRoute() { form.orchestration_routes.push({ ruleId: `route_${form.orchestration_routes.length + 1}`, targetAgentId: '', contains: '' }) }
+function removeOrchestrationRoute(i: number) { form.orchestration_routes.splice(i, 1) }
+function addWorkflowStep() { form.workflow_steps.push({ stepId: `step_${form.workflow_steps.length + 1}`, agentId: '', instruction: '' }) }
+function removeWorkflowStep(i: number) { form.workflow_steps.splice(i, 1) }
+function addSubagent() { form.subagents.push({ bindingId: `subagent_${form.subagents.length + 1}`, targetAgentId: '', role: '', description: '', exposeToUser: true }) }
+function removeSubagent(i: number) { form.subagents.splice(i, 1) }
 function toggleModelPolicy(key: string) {
   if (key in form.model_policy) delete form.model_policy[key]
   else form.model_policy[key] = ''
@@ -429,7 +460,29 @@ async function saveAgent() {
     const v = String(b.flow_id || '').trim()
     if (k && v) flowBindings[k] = v
   }
-  if (!Object.keys(flowBindings).length) { notifyError('至少需要绑定一个 Flow'); step.value = 1; return }
+  const mode = String(form.orchestration_mode || 'SINGLE').toUpperCase()
+  const orchestration: JsonMap = { mode }
+  if (mode === 'ROUTER') {
+    const routes = form.orchestration_routes
+      .map((r) => ({ ruleId: String(r.ruleId || '').trim(), targetAgentId: String(r.targetAgentId || '').trim(), contains: String(r.contains || '').trim() }))
+      .filter((r) => r.ruleId && r.targetAgentId && r.contains)
+    if (!routes.length) { notifyError('ROUTER 至少需要一条有效路由'); step.value = 1; return }
+    orchestration.routes = routes
+  }
+  if (mode === 'WORKFLOW') {
+    const workflow = form.workflow_steps
+      .map((s) => ({ stepId: String(s.stepId || '').trim(), agentId: String(s.agentId || '').trim(), instruction: String(s.instruction || '').trim() }))
+      .filter((s) => s.stepId && s.agentId)
+    if (!workflow.length) { notifyError('WORKFLOW 至少需要一个有效步骤'); step.value = 1; return }
+    orchestration.workflow = workflow
+  }
+  if (mode === 'SUPERVISOR') {
+    const subagents = form.subagents
+      .map((s) => ({ bindingId: String(s.bindingId || '').trim(), targetAgentId: String(s.targetAgentId || '').trim(), role: String(s.role || '').trim(), description: String(s.description || '').trim(), exposeToUser: s.exposeToUser !== false, toolRefs: [] }))
+      .filter((s) => s.bindingId && s.targetAgentId)
+    if (!subagents.length) { notifyError('SUPERVISOR 至少需要一个子 Agent'); step.value = 1; return }
+    orchestration.subagents = subagents
+  }
   const routerRules: JsonMap[] = []
   const seenFlowKeys = new Set<string>()
   for (const r of form.router_rules) {
@@ -464,6 +517,7 @@ async function saveAgent() {
   const workflowJson: JsonMap = {
     default_flow: Object.keys(flowBindings)[0] || '',
     flows: Object.fromEntries(Object.entries(flowBindings).map(([k, v]) => [k, { flow_id: v }])),
+    orchestration,
   }
   try {
     let agentId = selectedId.value
@@ -649,43 +703,82 @@ onMounted(async () => { await loadDomains(); await loadDeps(); await loadAgents(
       </div>
 
       <div v-else-if="step===1" class="panel-inner">
-        <div class="actions">
-          <button class="btn btn-ghost btn-sm" @click="addFlowBinding">添加 Flow 绑定</button>
-          <button class="btn btn-ghost btn-sm" @click="addRouterRule">添加路由意图</button>
+        <div class="field wide">
+          <label>编排模式</label>
+          <select v-model="form.orchestration_mode">
+            <option value="SINGLE">SINGLE - 单 Agent</option>
+            <option value="ROUTER">ROUTER - 按关键词路由到目标 Agent</option>
+            <option value="WORKFLOW">WORKFLOW - 串行执行多个 Agent</option>
+            <option value="SUPERVISOR">SUPERVISOR - 主 Agent 挂载子 Agent</option>
+          </select>
         </div>
-        <table>
-          <thead><tr><th>Flow Key</th><th>Flow ID</th><th>能力</th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="(b,i) in form.flow_bindings" :key="'flow'+i">
-              <td><input v-model="b.key" placeholder="flow key（如 goal_driven）"/></td>
-              <td>
-                <select v-model="b.flow_id">
-                  <option value="">选择 Flow</option>
-                  <option v-for="f in flows" :key="f.flow_id||f.id" :value="f.flow_id||f.id">{{ f.display_name||f.name||f.flow_id||f.id }}</option>
-                </select>
-              </td>
-              <td><div class="flow-caps"><span v-for="(c,ci) in capBadges(String(b.flow_id||''))" :key="ci" class="flow-cap" :class="c.trait?(c.on?'flow-cap-trait':'flow-cap-trait-no'):(c.on?'flow-cap-yes':'flow-cap-no')">{{ c.label }}</span></div></td>
-              <td><button class="btn small danger" @click="removeFlowBinding(i)">删除</button></td>
-            </tr>
-            <tr v-if="!form.flow_bindings.length"><td colspan="4" class="empty">无绑定，至少添加一个 Flow</td></tr>
-          </tbody>
-        </table>
-        <table>
-          <thead><tr><th>意图描述</th><th>关键词（可选）</th><th>Flow Key</th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="(r,i) in form.router_rules" :key="i">
-              <td><input v-model="r.intent" placeholder="意图描述，如：知识库问答 / 总结文档 / 多步任务"/></td>
-              <td><input v-model="r.keywords" placeholder="兜底关键词，逗号分隔"/></td>
-              <td>
-                <select v-model="r.flow_key">
-                  <option value="">选择 Flow Key</option>
-                  <option v-for="k in flowKeyOptions" :key="k" :value="k">{{ k }}</option>
-                </select>
-              </td>
-              <td><button class="btn small danger" @click="removeRouterRule(i)">删除</button></td>
-            </tr>
-          </tbody>
-        </table>
+        <p class="pick-hint">这里保存的是 AgentScope runtime 实际读取的 orchestration，不再使用 Flow 绑定冒充编排。</p>
+
+        <div v-if="form.orchestration_mode === 'ROUTER'">
+          <div class="actions"><button class="btn btn-ghost btn-sm" @click="addOrchestrationRoute">添加路由</button></div>
+          <table>
+            <thead><tr><th>规则 ID</th><th>包含关键词</th><th>目标 Agent</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(r,i) in form.orchestration_routes" :key="'route'+i">
+                <td><input v-model="r.ruleId" placeholder="route_research"/></td>
+                <td><input v-model="r.contains" placeholder="用户消息包含该文本时命中"/></td>
+                <td>
+                  <select v-model="r.targetAgentId">
+                    <option value="">选择 Agent</option>
+                    <option v-for="a in agents" :key="String(a.agent_id)" :value="a.agent_id">{{ a.display_name || a.name || a.agent_id }}</option>
+                  </select>
+                </td>
+                <td><button class="btn small danger" @click="removeOrchestrationRoute(i)">删除</button></td>
+              </tr>
+              <tr v-if="!form.orchestration_routes.length"><td colspan="4" class="empty">暂无路由，保存 ROUTER 前至少添加一条。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-else-if="form.orchestration_mode === 'WORKFLOW'">
+          <div class="actions"><button class="btn btn-ghost btn-sm" @click="addWorkflowStep">添加步骤</button></div>
+          <table>
+            <thead><tr><th>步骤 ID</th><th>执行 Agent</th><th>指令</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(s,i) in form.workflow_steps" :key="'step'+i">
+                <td><input v-model="s.stepId" placeholder="research"/></td>
+                <td>
+                  <select v-model="s.agentId">
+                    <option value="">选择 Agent</option>
+                    <option v-for="a in agents" :key="String(a.agent_id)" :value="a.agent_id">{{ a.display_name || a.name || a.agent_id }}</option>
+                  </select>
+                </td>
+                <td><input v-model="s.instruction" placeholder="传给该步骤 Agent 的额外指令"/></td>
+                <td><button class="btn small danger" @click="removeWorkflowStep(i)">删除</button></td>
+              </tr>
+              <tr v-if="!form.workflow_steps.length"><td colspan="4" class="empty">暂无步骤，保存 WORKFLOW 前至少添加一个。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-else-if="form.orchestration_mode === 'SUPERVISOR'">
+          <div class="actions"><button class="btn btn-ghost btn-sm" @click="addSubagent">添加子 Agent</button></div>
+          <table>
+            <thead><tr><th>绑定名</th><th>目标 Agent</th><th>说明</th><th>暴露</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(s,i) in form.subagents" :key="'sub'+i">
+                <td><input v-model="s.bindingId" placeholder="researcher"/></td>
+                <td>
+                  <select v-model="s.targetAgentId">
+                    <option value="">选择 Agent</option>
+                    <option v-for="a in agents" :key="String(a.agent_id)" :value="a.agent_id">{{ a.display_name || a.name || a.agent_id }}</option>
+                  </select>
+                </td>
+                <td><input v-model="s.description" placeholder="这个子 Agent 负责什么"/></td>
+                <td><select v-model="s.exposeToUser"><option :value="true">true</option><option :value="false">false</option></select></td>
+                <td><button class="btn small danger" @click="removeSubagent(i)">删除</button></td>
+              </tr>
+              <tr v-if="!form.subagents.length"><td colspan="5" class="empty">暂无子 Agent，保存 SUPERVISOR 前至少添加一个。</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-else class="empty">SINGLE 模式不需要额外编排配置。</div>
       </div>
 
       <div v-else-if="step===2" class="tool-grid">

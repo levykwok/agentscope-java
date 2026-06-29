@@ -10,4 +10,8 @@ public interface AgentDefinitionRegistry {
     List<AgentDefinition> allPublished();
 
     Optional<AgentDefinition> findPublished(String agentId);
+
+    AgentDefinition upsert(YamlAgentDefinitionRegistry.AgentConfig agent);
+
+    void delete(String agentId);
 }

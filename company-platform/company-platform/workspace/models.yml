@@ -1,52 +1,210 @@
+---
 models:
-  # 本地离线回显模型（默认使用）
-  - modelId: mock
-    type: local
-    className: com.company.platform.model.MockModel
-    description: 本地离线回显模型，用于无 API Key 情况下联调
-    enabled: true
-
-  # OpenAI 标准模型（使用内置 provider 解析）
-  - modelId: openai:gpt-mock
-    type: provider
-    provider: openai
-    model: gpt-4o-mini
-    apiKeyEnv: OPENAI_API_KEY
-    description: OpenAI 示例模型配置（需要 OPENAI_API_KEY）
-    enabled: false
-
-  # OpenAI 兼容协议：自定义 baseUrl / endpoint / headers / body
-  - modelId: openai:custom-endpoint
-    type: provider
-    provider: openai
-    model: qwen-plus
-    baseUrl: ${COMPANY_OPENAI_BASE_URL:https://api.openai.com}
-    endpointPath: /v1/chat/completions
-    apiKeyEnv: OPENAI_API_KEY
-    formatterClass: io.agentscope.core.formatter.openai.OpenAIChatFormatter
-    stream: true
-    additionalHeaders:
-      X-Project-Id: ${OPENAI_PROJECT_ID:}
-    additionalBodyParams:
-      top_p: 0.85
-      temperature: 0.2
-    executionTimeoutMs: 300000
-    executionMaxAttempts: 3
-    executionInitialBackoffMs: 500
-    executionMaxBackoffMs: 5000
-    executionBackoffMultiplier: 2.0
-    description: OpenAI 兼容协议示例（支持自定义请求参数）
-    enabled: false
-
-  # DashScope 示例（仍可继续走内置 provider）
-  - modelId: dashscope:qwen-mock
-    type: provider
-    provider: dashscope
-    model: qwen-plus
-    description: DashScope 示例模型配置（需要 DASHSCOPE_API_KEY）
-    enabled: false
-
-  # 自定义协议扩展（需要你实现 Model 或 ModelRegistry.ModelFactory）
-  # type: provider
-  # modelFactoryClass: com.company.platform.model.MyCustomModelFactory
-  # enabled: false
+- modelId: "bge-m3"
+  kind: "embedding"
+  type: "provider"
+  provider: "ollama"
+  model: "bge-m3"
+  className: ""
+  modelFactoryClass: ""
+  apiKey: ""
+  apiKeyEnv: ""
+  baseUrl: "http://localhost:11434"
+  endpointPath: ""
+  formatterClass: ""
+  stream: false
+  temperature: null
+  topP: null
+  maxTokens: null
+  maxCompletionTokens: null
+  frequencyPenalty: null
+  presencePenalty: null
+  thinkingBudget: null
+  reasoningEffort: ""
+  topK: null
+  seed: null
+  cacheControl: null
+  parallelToolCalls: null
+  additionalHeaders: {}
+  additionalBodyParams: {}
+  additionalQueryParams: {}
+  executionTimeoutMs: null
+  executionMaxAttempts: null
+  executionInitialBackoffMs: null
+  executionMaxBackoffMs: null
+  executionBackoffMultiplier: null
+  proxyType: ""
+  proxyHost: ""
+  proxyPort: null
+  proxyUsername: ""
+  proxyPassword: ""
+  dimensions: null
+  description: ""
+  enabled: true
+- modelId: "deepseek-v4-flash"
+  kind: "chat"
+  type: "provider"
+  provider: "deepseek"
+  model: "deepseek-v4-flash"
+  className: ""
+  modelFactoryClass: ""
+  apiKey: "sk-0f4a65ea1e9548aeb9268a53d7a97cbf"
+  apiKeyEnv: ""
+  baseUrl: "https://api.deepseek.com/chat/completions"
+  endpointPath: ""
+  formatterClass: ""
+  stream: false
+  temperature: null
+  topP: null
+  maxTokens: null
+  maxCompletionTokens: null
+  frequencyPenalty: null
+  presencePenalty: null
+  thinkingBudget: null
+  reasoningEffort: ""
+  topK: null
+  seed: null
+  cacheControl: null
+  parallelToolCalls: null
+  additionalHeaders: {}
+  additionalBodyParams: {}
+  additionalQueryParams: {}
+  executionTimeoutMs: null
+  executionMaxAttempts: null
+  executionInitialBackoffMs: null
+  executionMaxBackoffMs: null
+  executionBackoffMultiplier: null
+  proxyType: ""
+  proxyHost: ""
+  proxyPort: null
+  proxyUsername: ""
+  proxyPassword: ""
+  dimensions: null
+  description: ""
+  enabled: true
+- modelId: "mock"
+  kind: "chat"
+  type: "local"
+  provider: "openai"
+  model: ""
+  className: "com.company.platform.model.MockModel"
+  modelFactoryClass: ""
+  apiKey: ""
+  apiKeyEnv: ""
+  baseUrl: ""
+  endpointPath: ""
+  formatterClass: ""
+  stream: null
+  temperature: null
+  topP: null
+  maxTokens: null
+  maxCompletionTokens: null
+  frequencyPenalty: null
+  presencePenalty: null
+  thinkingBudget: null
+  reasoningEffort: ""
+  topK: null
+  seed: null
+  cacheControl: null
+  parallelToolCalls: null
+  additionalHeaders: {}
+  additionalBodyParams: {}
+  additionalQueryParams: {}
+  executionTimeoutMs: null
+  executionMaxAttempts: null
+  executionInitialBackoffMs: null
+  executionMaxBackoffMs: null
+  executionBackoffMultiplier: null
+  proxyType: ""
+  proxyHost: ""
+  proxyPort: null
+  proxyUsername: ""
+  proxyPassword: ""
+  dimensions: null
+  description: "本地离线回显模型，用于无 API Key 情况下联调"
+  enabled: true
+- modelId: "openai:custom-endpoint"
+  kind: "chat"
+  type: "provider"
+  provider: "openai"
+  model: "qwen-plus"
+  className: ""
+  modelFactoryClass: ""
+  apiKey: ""
+  apiKeyEnv: "OPENAI_API_KEY"
+  baseUrl: "https://api.openai.com"
+  endpointPath: "/v1/chat/completions"
+  formatterClass: "io.agentscope.core.formatter.openai.OpenAIChatFormatter"
+  stream: true
+  temperature: null
+  topP: null
+  maxTokens: null
+  maxCompletionTokens: null
+  frequencyPenalty: null
+  presencePenalty: null
+  thinkingBudget: null
+  reasoningEffort: ""
+  topK: null
+  seed: null
+  cacheControl: null
+  parallelToolCalls: null
+  additionalHeaders:
+    X-Project-Id: ""
+  additionalBodyParams:
+    top_p: 0.85
+    temperature: 0.2
+  additionalQueryParams: {}
+  executionTimeoutMs: 300000
+  executionMaxAttempts: 3
+  executionInitialBackoffMs: 500
+  executionMaxBackoffMs: 5000
+  executionBackoffMultiplier: 2.0
+  proxyType: ""
+  proxyHost: ""
+  proxyPort: null
+  proxyUsername: ""
+  proxyPassword: ""
+  dimensions: null
+  description: "OpenAI 兼容协议示例（支持自定义请求参数）"
+  enabled: false
+- modelId: "openai:gpt-mock"
+  kind: "chat"
+  type: "provider"
+  provider: "openai"
+  model: "gpt-4o-mini"
+  className: ""
+  modelFactoryClass: ""
+  apiKey: ""
+  apiKeyEnv: "OPENAI_API_KEY"
+  baseUrl: ""
+  endpointPath: ""
+  formatterClass: ""
+  stream: null
+  temperature: null
+  topP: null
+  maxTokens: null
+  maxCompletionTokens: null
+  frequencyPenalty: null
+  presencePenalty: null
+  thinkingBudget: null
+  reasoningEffort: ""
+  topK: null
+  seed: null
+  cacheControl: null
+  parallelToolCalls: null
+  additionalHeaders: {}
+  additionalBodyParams: {}
+  additionalQueryParams: {}
+  executionTimeoutMs: null
+  executionMaxAttempts: null
+  executionInitialBackoffMs: null
+  executionMaxBackoffMs: null
+  executionBackoffMultiplier: null
+  proxyType: ""
+  proxyHost: ""
+  proxyPort: null
+  proxyUsername: ""
+  proxyPassword: ""
+  dimensions: null
+  description: "OpenAI 示例模型配置（需要 OPENAI_API_KEY）"
+  enabled: false

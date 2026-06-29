@@ -14,6 +14,7 @@ const bindings = ref<Record<string, JsonMap[]>>({})
 const toolStatus = ref<Record<string, string>>({})
 const toolVisibility = ref<Record<string, string>>({})
 const toolOutput = ref<Record<string, string>>({})
+const toolSearch = ref<Record<string, string>>({})
 const serverProbe = ref<Record<string, JsonMap | null>>({})
 const serverProbing = ref<Record<string, boolean>>({})
 const quickProbe = ref<JsonMap | null>(null)
@@ -29,7 +30,10 @@ const saving = ref(false)
 const form = reactive({
   id: '',
   name: '',
+  transport: 'streamable-http',
   endpoint: '',
+  command: 'node',
+  args: '',
   description: '',
   auth_header: '',
   timeout_ms: 5000,
@@ -62,7 +66,10 @@ async function load() {
 function openAdd() {
   form.id = ''
   form.name = ''
+  form.transport = 'streamable-http'
   form.endpoint = ''
+  form.command = 'node'
+  form.args = ''
   form.description = ''
   form.auth_header = ''
   form.timeout_ms = 5000
@@ -73,7 +80,10 @@ function openAdd() {
 function editServer(s: JsonMap) {
   form.id = String(s.id)
   form.name = String(s.name || '')
+  form.transport = String(s.transport || 'streamable-http')
   form.endpoint = String(s.endpoint || '')
+  form.command = String(s.command || 'node')
+  form.args = Array.isArray(s.args) ? (s.args as string[]).join('\n') : ''
   form.description = String(s.description || '')
   form.auth_header = ''
   form.timeout_ms = typeof s.timeout_ms === 'number' ? s.timeout_ms : 5000
@@ -83,14 +93,18 @@ function editServer(s: JsonMap) {
 }
 
 async function testModalEndpoint() {
-  if (!form.endpoint.trim()) {
+  if (form.transport !== 'stdio' && !form.endpoint.trim()) {
     notifyError('请填写 Endpoint')
+    return
+  }
+  if (form.transport === 'stdio' && !form.command.trim()) {
+    notifyError('请填写 Command')
     return
   }
   modalTesting.value = true
   modalProbe.value = null
   try {
-    const data = await api('POST', '/probe', { endpoint: form.endpoint.trim(), auth_header: form.auth_header.trim() || undefined })
+    const data = await api('POST', '/probe', { transport: form.transport, endpoint: form.endpoint.trim(), command: form.command.trim(), args: form.args.split('\n').map((s) => s.trim()).filter(Boolean), auth_header: form.auth_header.trim() || undefined })
     modalProbe.value = (data.probe as JsonMap) || null
   } catch (err) {
     modalProbe.value = { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -104,8 +118,12 @@ async function save() {
     notifyError('请填写名称')
     return
   }
-  if (!form.endpoint.trim()) {
+  if (form.transport !== 'stdio' && !form.endpoint.trim()) {
     notifyError('请填写 Endpoint')
+    return
+  }
+  if (form.transport === 'stdio' && !form.command.trim()) {
+    notifyError('请填写 Command')
     return
   }
   saving.value = true
@@ -113,7 +131,10 @@ async function save() {
     const tool_filter = form.tool_filter.split(',').map((s) => s.trim()).filter(Boolean)
     const body: JsonMap = {
       name: form.name.trim(),
+      transport: form.transport,
       endpoint: form.endpoint.trim(),
+      command: form.command.trim(),
+      args: form.args.split('\n').map((s) => s.trim()).filter(Boolean),
       description: form.description.trim() || null,
       timeout_ms: form.timeout_ms || 5000,
       tool_filter,
@@ -159,6 +180,21 @@ function paramNames(t: JsonMap): string {
   if (!props || typeof props !== 'object') return '无'
   const keys = Object.keys(props).sort()
   return keys.length ? keys.join(', ') : '无'
+}
+function visibleTools(serverId: string): JsonMap[] {
+  const tools = serverTools.value[serverId] || []
+  const keyword = (toolSearch.value[serverId] || '').trim().toLowerCase()
+  if (!keyword) return tools
+  return tools.filter((t) => {
+    const haystack = [
+      t.tool_name,
+      t.tool_id,
+      t.runtime_name,
+      t.description,
+      paramNames(t),
+    ].map((v) => String(v || '').toLowerCase()).join(' ')
+    return haystack.includes(keyword)
+  })
 }
 
 async function probe(s: JsonMap) {
@@ -331,6 +367,7 @@ onMounted(load)
             <div class="server-name">{{ s.name }}</div>
             <div class="server-endpoint">{{ s.endpoint }}</div>
             <div class="server-badges">
+              <span class="badge badge-blue">{{ s.transport || 'streamable-http' }}</span>
               <span class="badge" :class="s.enabled ? 'badge-green' : 'badge-red'">{{ s.enabled ? '● 启用' : '○ 禁用' }}</span>
               <span class="badge" :class="healthBadge(s).cls">{{ healthBadge(s).label }}</span>
               <span v-if="s.has_auth" class="badge badge-blue">🔑 有认证</span>
@@ -341,7 +378,7 @@ onMounted(load)
         <div v-if="s.description" class="server-desc">{{ s.description }}</div>
         <div class="server-desc">健康状态：{{ healthMeta(s) }}</div>
         <div class="server-tools">
-          工具过滤：
+          配置允许工具：
           <template v-if="(s.tool_filter as string[] | undefined)?.length">
             <span v-for="t in (s.tool_filter as string[])" :key="t">{{ t }}</span>
           </template>
@@ -359,34 +396,50 @@ onMounted(load)
         </div>
 
         <div v-if="expanded[String(s.id)] === 'tools'" class="tools-panel open">
-          <div class="bindings-label">发现工具</div>
-          <div v-if="(serverTools[String(s.id)] || []).length" class="panel-rows">
-            <div v-for="t in serverTools[String(s.id)] || []" :key="t.tool_id as string" class="tool-row">
-              <div>
+          <div class="tools-panel-head">
+            <div>
+              <div class="bindings-label">发现工具</div>
+              <div class="tools-count">{{ (serverTools[String(s.id)] || []).length }} 个工具 · 显示 {{ visibleTools(String(s.id)).length }} 个</div>
+            </div>
+            <input v-model="toolSearch[String(s.id)]" class="tool-search" placeholder="搜索工具名、参数、描述..." />
+          </div>
+          <div v-if="(serverTools[String(s.id)] || []).length" class="tools-table">
+            <div class="tools-table-head">
+              <span>工具</span>
+              <span>参数</span>
+              <span>状态</span>
+              <span>操作</span>
+            </div>
+            <div v-for="t in visibleTools(String(s.id))" :key="t.tool_id as string" class="tool-row">
+              <div class="tool-main">
                 <div class="tool-name">{{ t.tool_name }}</div>
-                <div class="tool-meta">{{ t.tool_id }} · runtime: {{ t.runtime_name }}</div>
-                <div class="tool-meta">参数：{{ paramNames(t) }}</div>
+                <div class="tool-meta">{{ t.tool_id }}</div>
                 <div v-if="t.description" class="tool-desc">{{ t.description }}</div>
+                <div v-if="toolOutput[`${s.id}:${t.tool_id}`]" class="tool-test-out">{{ toolOutput[`${s.id}:${t.tool_id}`] }}</div>
+              </div>
+              <div class="tool-params">{{ paramNames(t) }}</div>
+              <div class="tool-state">
+                <span class="badge" :class="toolStatus[`${s.id}:${t.tool_id}`] === 'enabled' ? 'badge-green' : 'badge-red'">{{ toolStatus[`${s.id}:${t.tool_id}`] === 'enabled' ? 'enabled' : 'disabled' }}</span>
+                <span class="badge" :class="toolVisibility[`${s.id}:${t.tool_id}`] === 'discoverable' ? 'badge-blue' : 'badge-gray'">{{ toolVisibility[`${s.id}:${t.tool_id}`] === 'discoverable' ? '可见' : '隐藏' }}</span>
               </div>
               <div class="tool-actions">
-                <span class="badge" :class="toolStatus[`${s.id}:${t.tool_id}`] === 'enabled' ? 'badge-green' : 'badge-red'">{{ toolStatus[`${s.id}:${t.tool_id}`] === 'enabled' ? 'enabled' : t.binding_status }}</span>
-                <select v-model="toolStatus[`${s.id}:${t.tool_id}`]" class="select-sm">
+                <select v-model="toolStatus[`${s.id}:${t.tool_id}`]" class="select-sm" title="启停">
                   <option value="enabled">启用</option>
                   <option value="disabled">停用</option>
                 </select>
-                <select v-model="toolVisibility[`${s.id}:${t.tool_id}`]" class="select-sm">
+                <select v-model="toolVisibility[`${s.id}:${t.tool_id}`]" class="select-sm" title="可见性">
                   <option value="discoverable">可见</option>
                   <option value="hidden">隐藏</option>
                 </select>
                 <button class="btn btn-ghost btn-sm" @click="testTool(String(s.id), t)">测试</button>
                 <button class="btn btn-ghost btn-sm" @click="schemaHistory(String(s.id), t)">历史</button>
                 <button class="btn btn-primary btn-sm" @click="saveToolBinding(String(s.id), t)">保存</button>
-                <div v-if="toolOutput[`${s.id}:${t.tool_id}`]" class="tool-test-out">{{ toolOutput[`${s.id}:${t.tool_id}`] }}</div>
               </div>
             </div>
+            <div v-if="!visibleTools(String(s.id)).length" class="tools-empty">没有匹配的工具。</div>
           </div>
           <div v-else class="tools-empty">
-            还没有同步到工具目录。先点"测试连通"，成功后会自动同步 tools/list。
+            没有发现到真实工具。请先确认 MCP 服务已启动，并且当前 transport 支持 tools/list。
             <button class="btn btn-ghost btn-sm" style="align-self:flex-start;margin-top:6px" @click="probeAndReloadTools(s)">测试并同步</button>
           </div>
         </div>
@@ -412,9 +465,28 @@ onMounted(load)
           <input v-model="form.name" class="form-input" placeholder="如 datetime-tools、calc-tools" />
         </div>
         <div class="form-group">
-          <label class="form-label">Endpoint *</label>
-          <input v-model="form.endpoint" class="form-input mono" placeholder="http://localhost:8101/mcp" />
-          <div class="form-hint">必须是完整 URL，接受 POST JSON-RPC 请求（MCP Streamable HTTP）</div>
+          <label class="form-label">MCP Transport *</label>
+          <select v-model="form.transport" class="form-input">
+            <option value="streamable-http">streamable-http（推荐，HTTP POST /mcp）</option>
+            <option value="stdio">stdio（本地进程）</option>
+            <option value="sse">sse（旧式 SSE）</option>
+            <option value="http">http（兼容 HTTP）</option>
+          </select>
+          <div class="form-hint">不同 transport 会保存成不同的 MCP 配置：stdio 使用 command/args，HTTP/SSE 使用 URL。</div>
+        </div>
+        <div v-if="form.transport === 'stdio'" class="form-group">
+          <label class="form-label">Command *</label>
+          <input v-model="form.command" class="form-input mono" placeholder="node" />
+        </div>
+        <div v-if="form.transport === 'stdio'" class="form-group">
+          <label class="form-label">Args（每行一个）</label>
+          <textarea v-model="form.args" class="form-input mono" rows="4" placeholder="mcp-servers/platform-demo/server.mjs&#10;--transport&#10;stdio"></textarea>
+          <div class="form-hint">本地 stdio MCP server 的启动参数。相对路径取决于后端进程工作目录。</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Endpoint {{ form.transport === 'stdio' ? '（stdio 可留空）' : '*' }}</label>
+          <input v-model="form.endpoint" class="form-input mono" :disabled="form.transport === 'stdio'" placeholder="http://localhost:8101/mcp" />
+          <div class="form-hint">streamable-http 通常是 /mcp；sse 通常是 /sse；stdio 不需要 URL。</div>
         </div>
         <div class="form-group">
           <label class="form-label">描述</label>
@@ -482,16 +554,27 @@ onMounted(load)
 
 .tools-panel, .bindings-panel { border-top: 1px solid var(--border); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .bindings-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.tools-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tools-count { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.tool-search { width: 220px; max-width: 48%; height: 30px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; font-size: 12px; outline: none; }
+.tool-search:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #dbeafe; }
 .panel-rows { display: flex; flex-direction: column; gap: 6px; }
 .binding-row { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
 .binding-agent { flex: 1; font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); word-break: break-all; }
-.tool-row { display: flex; flex-direction: column; gap: 8px; min-width: 0; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 11px; }
-.tool-row > div:first-child { min-width: 0; }
+.tools-table { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+.tools-table-head { position: sticky; top: 0; z-index: 1; display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(90px, .7fr) minmax(96px, .6fr) minmax(320px, 1fr); gap: 10px; align-items: center; padding: 8px 10px; background: #f8fafc; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.tool-row { display: grid; grid-template-columns: minmax(220px, 1.5fr) minmax(90px, .7fr) minmax(96px, .6fr) minmax(320px, 1fr); gap: 10px; align-items: start; min-width: 780px; padding: 10px; border-bottom: 1px solid var(--border); }
+.tool-row:last-child { border-bottom: 0; }
+.tool-row:hover { background: #f8fafc; }
+.tool-main { min-width: 0; }
 .tool-name { font-size: 12px; font-weight: 700; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--text); overflow-wrap: anywhere; }
 .tool-meta { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; margin-top: 3px; }
 .tool-desc { font-size: 11px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
-.tool-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-start; flex-wrap: wrap; padding-top: 8px; border-top: 1px dashed var(--border); }
-.tool-test-out { flex-basis: 100%; font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+.tool-params { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.tool-state { display: flex; gap: 5px; align-items: flex-start; flex-wrap: wrap; }
+.tool-state .badge { font-size: 10px; padding: 2px 6px; border-radius: 99px; }
+.tool-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.tool-test-out { margin-top: 7px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; max-height: 110px; overflow: auto; }
 .select-sm { border: 1px solid var(--border); border-radius: 7px; background: #fff; color: var(--text); font-size: 12px; height: 30px; padding: 0 8px; }
 .tools-empty { font-size: 12px; color: var(--muted); padding: 4px 0; display: flex; flex-direction: column; }
 
@@ -517,5 +600,7 @@ onMounted(load)
   .servers-grid { grid-template-columns: 1fr; }
   .toolbar { align-items: stretch; flex-direction: column; }
   .toolbar-right { margin-left: 0; }
+  .tools-panel-head { align-items: stretch; flex-direction: column; }
+  .tool-search { width: 100%; max-width: none; }
 }
 </style>

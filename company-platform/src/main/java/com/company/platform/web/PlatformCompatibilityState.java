@@ -11,9 +11,16 @@ import com.company.platform.control.ModelConfigRegistry;
 import com.company.platform.control.ModelProviderRegistry;
 import com.company.platform.control.ModelProviderSpec;
 import com.company.platform.control.ModelSpec;
+import com.company.platform.control.OrchestrationMode;
+import com.company.platform.control.OrchestrationPolicy;
+import com.company.platform.control.RouteRule;
 import com.company.platform.control.SkillRegistry;
+import com.company.platform.control.SubagentBinding;
 import com.company.platform.control.ToolRegistry;
 import com.company.platform.control.ToolSpec;
+import com.company.platform.control.WorkflowStep;
+import com.company.platform.control.YamlAgentDefinitionRegistry;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,6 +55,9 @@ public class PlatformCompatibilityState {
     private final Map<String, Map<String, Object>> aliases = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> mcpServers = new ConcurrentHashMap<>();
     private final Map<String, List<Map<String, Object>>> mcpBindings = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Object>> toolBindings = new ConcurrentHashMap<>();
+    private final Map<String, List<Map<String, Object>>> toolSchemaSnapshots =
+            new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> knowledgeDocs = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> collections = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Object>> memories = new ConcurrentHashMap<>();
@@ -70,6 +80,7 @@ public class PlatformCompatibilityState {
         this.workspaceSessionStore = workspaceSessionStore;
         seedModels();
         seedMcps();
+        seedAgentMcpBindings();
     }
 
     public List<Map<String, Object>> agents() {
@@ -117,6 +128,190 @@ public class PlatformCompatibilityState {
         row.putIfAbsent("source", "custom");
         row.putIfAbsent("enabled", true);
         return row;
+    }
+
+    public Map<String, Object> saveAgentSpec(String agentId, Map<String, Object> payload) {
+        Map<String, Object> config = childMap(payload, "config_json");
+        Map<String, Object> workflow = childMap(payload, "workflow_json");
+        AgentDefinition existing = agentRegistry.findPublished(agentId).orElse(null);
+        String name = string(config, "name", existing == null ? agentId : existing.name());
+        String systemPrompt =
+                string(
+                        childMap(config, "prompt_policy"),
+                        "role",
+                        string(
+                                config,
+                                "description",
+                                existing == null ? "" : existing.systemPrompt()));
+        String model = firstModel(config, existing == null ? "mock" : existing.model());
+        List<String> toolRefs = stringList(childMap(config, "tool_scope").get("include"));
+        if (toolRefs.isEmpty() && existing != null) {
+            toolRefs = existing.toolRefs();
+        }
+        List<String> skillRefs = stringList(childMap(config, "skill_scope").get("include"));
+        if (skillRefs.isEmpty() && existing != null) {
+            skillRefs = existing.skillRefs();
+        }
+        OrchestrationPolicy orchestration =
+                orchestration(
+                        workflow.get("orchestration"),
+                        existing == null ? OrchestrationPolicy.single() : existing.orchestration());
+        String workspace =
+                existing == null ? "workspace/" + agentId : externalWorkspace(existing.workspace());
+        AgentDefinition saved =
+                agentRegistry.upsert(
+                        new YamlAgentDefinitionRegistry.AgentConfig(
+                                agentId,
+                                existing == null ? "v1" : existing.version(),
+                                name,
+                                model,
+                                systemPrompt,
+                                workspace,
+                                toolRefs,
+                                mcpRefsForAgent(agentId),
+                                skillRefs,
+                                orchestration));
+        return agentRow(saved);
+    }
+
+    private String firstModel(Map<String, Object> config, String fallback) {
+        Map<String, Object> policy = childMap(config, "model_policy");
+        for (String key : List.of("qa", "chat", "default", "primary")) {
+            Object value = policy.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return String.valueOf(value);
+            }
+        }
+        return fallback;
+    }
+
+    private OrchestrationPolicy orchestration(Object value, OrchestrationPolicy fallback) {
+        if (value instanceof OrchestrationPolicy policy) {
+            return policy;
+        }
+        if (!(value instanceof Map<?, ?> raw)) {
+            return fallback;
+        }
+        Map<String, Object> map = normalize(raw);
+        return new OrchestrationPolicy(
+                mode(string(map, "mode", fallback.mode().name())),
+                subagents(map.get("subagents")),
+                routes(map.get("routes")),
+                workflowSteps(map.get("workflow")));
+    }
+
+    private OrchestrationMode mode(String value) {
+        try {
+            return OrchestrationMode.valueOf(value.toUpperCase());
+        } catch (RuntimeException e) {
+            return OrchestrationMode.SINGLE;
+        }
+    }
+
+    private List<SubagentBinding> subagents(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(this::subagent)
+                .toList();
+    }
+
+    private SubagentBinding subagent(Map<?, ?> raw) {
+        Map<String, Object> map = normalize(raw);
+        return new SubagentBinding(
+                stringAny(map, "bindingId", "binding_id", "id"),
+                stringAny(map, "targetAgentId", "target_agent_id", "agent_id"),
+                string(map, "role", ""),
+                string(map, "description", ""),
+                Boolean.TRUE.equals(map.get("exposeToUser"))
+                        || Boolean.TRUE.equals(map.get("expose_to_user")),
+                stringList(
+                        map.get("toolRefs") == null ? map.get("tool_refs") : map.get("toolRefs")));
+    }
+
+    private List<RouteRule> routes(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(this::route)
+                .toList();
+    }
+
+    private RouteRule route(Map<?, ?> raw) {
+        Map<String, Object> map = normalize(raw);
+        return new RouteRule(
+                stringAny(map, "ruleId", "rule_id", "id"),
+                stringAny(map, "targetAgentId", "target_agent_id", "agent_id"),
+                string(map, "contains", ""));
+    }
+
+    private List<WorkflowStep> workflowSteps(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(this::workflowStep)
+                .toList();
+    }
+
+    private WorkflowStep workflowStep(Map<?, ?> raw) {
+        Map<String, Object> map = normalize(raw);
+        return new WorkflowStep(
+                stringAny(map, "stepId", "step_id", "id"),
+                stringAny(map, "agentId", "agent_id", "targetAgentId"),
+                string(map, "instruction", ""));
+    }
+
+    private Map<String, Object> normalize(Map<?, ?> raw) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        raw.forEach((k, v) -> map.put(String.valueOf(k), v));
+        return map;
+    }
+
+    private String stringAny(Map<String, Object> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return String.valueOf(value);
+            }
+        }
+        return "";
+    }
+
+    private Map<String, Object> childMap(Map<String, Object> source, String key) {
+        Object value = source.get(key);
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> copy = new LinkedHashMap<>();
+            map.forEach((k, v) -> copy.put(String.valueOf(k), v));
+            return copy;
+        }
+        return Map.of();
+    }
+
+    private List<String> stringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .map(String::valueOf)
+                .map(String::trim)
+                .filter(text -> !text.isBlank())
+                .toList();
+    }
+
+    private String externalWorkspace(Path workspace) {
+        if (agentRegistry instanceof YamlAgentDefinitionRegistry yamlRegistry) {
+            return yamlRegistry.externalWorkspace(workspace);
+        }
+        return workspace == null ? null : workspace.toString();
     }
 
     public List<Map<String, Object>> tools() {
@@ -192,15 +387,34 @@ public class PlatformCompatibilityState {
     public Map<String, Object> upsertMcpServer(String id, Map<String, Object> payload) {
         String serverId =
                 id == null || id.isBlank() ? String.valueOf(sequence.getAndIncrement()) : id;
-        Map<String, Object> row = new LinkedHashMap<>();
+        Map<String, Object> existing =
+                new LinkedHashMap<>(mcpServers.getOrDefault(serverId, Map.of()));
+        Map<String, Object> row = new LinkedHashMap<>(existing);
         row.put("id", serverId);
-        row.put("name", string(payload, "name", "mcp-" + serverId));
-        row.put("endpoint", string(payload, "endpoint", string(payload, "url", "")));
-        row.put("description", string(payload, "description", ""));
-        row.put("timeout_ms", number(payload.get("timeout_ms"), 5000));
-        row.put("tool_filter", payload.getOrDefault("tool_filter", List.of()));
-        row.put("enabled", payload.getOrDefault("enabled", true));
-        row.put("has_auth", payload.containsKey("auth_header"));
+        row.put("name", string(payload, "name", string(row, "name", "mcp-" + serverId)));
+        row.put(
+                "transport",
+                string(payload, "transport", string(row, "transport", "streamable-http")));
+        row.put("command", string(payload, "command", string(row, "command", "")));
+        if (payload.containsKey("args")) {
+            row.put("args", stringList(payload.get("args")));
+        } else {
+            row.putIfAbsent("args", List.of());
+        }
+        row.put(
+                "endpoint",
+                string(payload, "endpoint", string(payload, "url", string(row, "endpoint", ""))));
+        row.put("description", string(payload, "description", string(row, "description", "")));
+        row.put(
+                "timeout_ms",
+                number(payload.get("timeout_ms"), number(row.get("timeout_ms"), 5000)));
+        row.put(
+                "tool_filter",
+                payload.getOrDefault("tool_filter", row.getOrDefault("tool_filter", List.of())));
+        row.put("enabled", payload.getOrDefault("enabled", row.getOrDefault("enabled", true)));
+        row.put(
+                "has_auth",
+                payload.containsKey("auth_header") || Boolean.TRUE.equals(row.get("has_auth")));
         row.put(
                 "metadata",
                 row(
@@ -211,8 +425,16 @@ public class PlatformCompatibilityState {
                         "last_discovered_at",
                         Instant.now().toString()));
         mcpServers.put(serverId, row);
+        mcpRegistry.upsert(toMcpSpec(row));
         audit("mcp.server.saved", serverId, row);
         return row;
+    }
+
+    public void deleteMcpServer(String id) {
+        mcpServers.remove(id);
+        mcpRegistry.delete(id);
+        mcpBindings.remove(id);
+        audit("mcp.server.deleted", id, row("id", id));
     }
 
     public Map<String, Object> providerUpsert(String id, Map<String, Object> payload) {
@@ -276,18 +498,6 @@ public class PlatformCompatibilityState {
     public Map<String, Object> createRun(String agentId, String query, String userId) {
         String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
         Instant now = Instant.now();
-        Map<String, Object> output =
-                row(
-                        "result",
-                        row(
-                                "answer",
-                                "兼容层已收到请求: " + query,
-                                "text",
-                                "兼容层已收到请求: " + query,
-                                "route",
-                                "compatibility",
-                                "citations",
-                                List.of()));
         Map<String, Object> run =
                 row(
                         "run_id",
@@ -295,7 +505,7 @@ public class PlatformCompatibilityState {
                         "agent_id",
                         agentId,
                         "status",
-                        "succeeded",
+                        "running",
                         "user_id",
                         userId,
                         "trace_id",
@@ -305,11 +515,9 @@ public class PlatformCompatibilityState {
                         "started_at",
                         now.toString(),
                         "finished_at",
-                        Instant.now().toString(),
-                        "output_ref",
-                        output,
+                        "",
                         "spec_key",
-                        "compat");
+                        "agentscope_runtime");
         List<Map<String, Object>> steps =
                 List.of(
                         row(
@@ -325,19 +533,74 @@ public class PlatformCompatibilityState {
                                 "step_id",
                                 "respond",
                                 "step_type",
-                                "compat_response",
+                                "agentscope_runtime",
                                 "status",
-                                "succeeded",
+                                "running",
                                 "duration_ms",
-                                1));
+                                0));
         List<Map<String, Object>> events =
-                List.of(
-                        event(runId, "run.started", row("stage", "compat")),
-                        event(runId, "run.succeeded", output));
+                List.of(event(runId, "run.started", row("stage", "agentscope_runtime")));
         runs.put(runId, run);
         runSteps.put(runId, new ArrayList<>(steps));
         runEvents.put(runId, new ArrayList<>(events));
         return run;
+    }
+
+    public Map<String, Object> finishRun(String runId, String answer) {
+        Map<String, Object> output =
+                row(
+                        "result",
+                        row(
+                                "answer",
+                                answer,
+                                "text",
+                                answer,
+                                "route",
+                                "agentscope",
+                                "citations",
+                                List.of()));
+        Map<String, Object> run =
+                new LinkedHashMap<>(runs.getOrDefault(runId, row("run_id", runId)));
+        run.put("status", "succeeded");
+        run.put("finished_at", Instant.now().toString());
+        run.put("output_ref", output);
+        runs.put(runId, run);
+        markStep(runId, "respond", "succeeded", null);
+        runEvents
+                .computeIfAbsent(runId, ignored -> new ArrayList<>())
+                .add(event(runId, "run.succeeded", output));
+        return run;
+    }
+
+    public Map<String, Object> failRun(String runId, Throwable error) {
+        String message = error == null ? "unknown error" : error.getMessage();
+        Map<String, Object> run =
+                new LinkedHashMap<>(runs.getOrDefault(runId, row("run_id", runId)));
+        run.put("status", "failed");
+        run.put("finished_at", Instant.now().toString());
+        run.put("error", row("message", message == null || message.isBlank() ? "执行失败" : message));
+        runs.put(runId, run);
+        markStep(runId, "respond", "failed", message);
+        runEvents
+                .computeIfAbsent(runId, ignored -> new ArrayList<>())
+                .add(event(runId, "run.failed", row("error", message)));
+        return run;
+    }
+
+    private void markStep(String runId, String stepId, String status, String summary) {
+        List<Map<String, Object>> rows = runSteps.get(runId);
+        if (rows == null) {
+            return;
+        }
+        for (Map<String, Object> row : rows) {
+            if (stepId.equals(row.get("step_id"))) {
+                row.put("status", status);
+                row.put("duration_ms", number(row.get("duration_ms"), 0));
+                if (summary != null && !summary.isBlank()) {
+                    row.put("summary", summary);
+                }
+            }
+        }
     }
 
     public Map<String, Object> attach(String sessionId, String filename, String orgId) {
@@ -647,6 +910,55 @@ public class PlatformCompatibilityState {
                 List.of("echo", "health"));
     }
 
+    public Map<String, Object> probeMcpServer(String id) {
+        Map<String, Object> server = mcpServers.get(id);
+        if (server == null) {
+            return row(
+                    "probe",
+                    row("ok", false, "stage", "lookup", "error", "MCP server not found: " + id));
+        }
+        Map<String, Object> probe = probe(server);
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(
+                "health_status", Boolean.TRUE.equals(probe.get("ok")) ? "healthy" : "unhealthy");
+        metadata.put("last_tool_count", probe.getOrDefault("tool_count", 0));
+        metadata.put("server_name", probe.getOrDefault("server_name", ""));
+        metadata.put("server_version", probe.getOrDefault("server_version", ""));
+        metadata.put("last_discovered_at", Instant.now().toString());
+        if (!Boolean.TRUE.equals(probe.get("ok"))) {
+            metadata.put(
+                    "last_error",
+                    probe.getOrDefault("error", probe.getOrDefault("message", "unknown")));
+        }
+        server.put("metadata", metadata);
+        mcpServers.put(id, server);
+        return row("probe", probe, "server", server);
+    }
+
+    public Map<String, Object> updateMcpProbe(String id, Map<String, Object> probe) {
+        Map<String, Object> server = mcpServers.get(id);
+        if (server == null) {
+            return row(
+                    "probe",
+                    row("ok", false, "stage", "lookup", "error", "MCP server not found: " + id));
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(
+                "health_status", Boolean.TRUE.equals(probe.get("ok")) ? "healthy" : "unhealthy");
+        metadata.put("last_tool_count", probe.getOrDefault("tool_count", 0));
+        metadata.put("server_name", probe.getOrDefault("server_name", ""));
+        metadata.put("server_version", probe.getOrDefault("server_version", ""));
+        metadata.put("last_discovered_at", Instant.now().toString());
+        if (!Boolean.TRUE.equals(probe.get("ok"))) {
+            metadata.put(
+                    "last_error",
+                    probe.getOrDefault("error", probe.getOrDefault("message", "unknown")));
+        }
+        server.put("metadata", metadata);
+        mcpServers.put(id, server);
+        return row("probe", probe, "server", server);
+    }
+
     public List<Map<String, Object>> mcpTools(Map<String, Object> server) {
         String serverId = String.valueOf(server.getOrDefault("id", "0"));
         String runtimeName = String.valueOf(server.getOrDefault("name", "mcp"));
@@ -678,6 +990,63 @@ public class PlatformCompatibilityState {
                         Map.of("type", "object", "properties", Map.of())));
     }
 
+    public List<Map<String, Object>> enrichTools(List<Map<String, Object>> tools) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map<String, Object> tool : tools) {
+            Map<String, Object> row = new LinkedHashMap<>(tool);
+            String toolId = string(row, "tool_id", "");
+            Map<String, Object> binding = toolBindings.get(toolId);
+            if (binding != null) {
+                row.putAll(binding);
+            }
+            rows.add(row);
+            recordToolSchemaSnapshot(row);
+        }
+        return rows;
+    }
+
+    public Map<String, Object> saveToolBinding(String toolId, Map<String, Object> payload) {
+        Map<String, Object> row = new LinkedHashMap<>(payload == null ? Map.of() : payload);
+        row.put("tool_id", toolId);
+        row.putIfAbsent("binding_status", "enabled");
+        row.putIfAbsent("binding_visibility", "discoverable");
+        row.put("updated_at", Instant.now().toString());
+        toolBindings.put(toolId, row);
+        audit("tool.binding.saved", toolId, row);
+        return row;
+    }
+
+    public void recordToolSchemaSnapshot(Map<String, Object> tool) {
+        String toolId = string(tool, "tool_id", "");
+        if (toolId.isBlank()) {
+            return;
+        }
+        Object schema = tool.getOrDefault("parameter_schema", Map.of());
+        String checksum = Integer.toHexString(String.valueOf(schema).hashCode());
+        List<Map<String, Object>> snapshots =
+                toolSchemaSnapshots.computeIfAbsent(toolId, ignored -> new ArrayList<>());
+        boolean exists =
+                snapshots.stream()
+                        .anyMatch(row -> checksum.equals(String.valueOf(row.get("checksum"))));
+        if (!exists) {
+            snapshots.add(
+                    0,
+                    row(
+                            "version",
+                            "v" + (snapshots.size() + 1),
+                            "checksum",
+                            checksum,
+                            "discovered_at",
+                            Instant.now().toString(),
+                            "parameter_schema",
+                            schema));
+        }
+    }
+
+    public List<Map<String, Object>> toolSchemaSnapshots(String toolId) {
+        return toolSchemaSnapshots.getOrDefault(toolId, List.of());
+    }
+
     public Map<String, Object> bindMcp(Map<String, Object> payload) {
         String id = String.valueOf(sequence.getAndIncrement());
         String serverId = String.valueOf(payload.getOrDefault("mcp_server_id", ""));
@@ -685,7 +1054,28 @@ public class PlatformCompatibilityState {
         row.put("id", id);
         row.putIfAbsent("enabled", true);
         mcpBindings.computeIfAbsent(serverId, ignored -> new ArrayList<>()).add(row);
+        syncAgentMcpRefs(string(row, "agent_id", ""));
         return row;
+    }
+
+    private McpSpec toMcpSpec(Map<String, Object> row) {
+        String transport = string(row, "transport", "streamable-http");
+        String endpoint = string(row, "endpoint", "");
+        String auth = string(row, "auth_header", "");
+        Map<String, String> headers = auth.isBlank() ? Map.of() : Map.of("Authorization", auth);
+        return new McpSpec(
+                string(row, "id", string(row, "name", "mcp")),
+                transport,
+                string(row, "command", ""),
+                stringList(row.get("args")),
+                Map.of(),
+                endpoint,
+                headers,
+                Map.of(),
+                stringList(row.get("tool_filter")),
+                java.time.Duration.ofMillis(number(row.get("timeout_ms"), 5000)),
+                java.time.Duration.ofMillis(number(row.get("timeout_ms"), 5000)),
+                Boolean.TRUE.equals(row.getOrDefault("enabled", true)));
     }
 
     public List<Map<String, Object>> mcpBindings(String serverId) {
@@ -693,9 +1083,58 @@ public class PlatformCompatibilityState {
     }
 
     public void deleteMcpBinding(String id) {
+        String agentId = "";
         for (List<Map<String, Object>> list : mcpBindings.values()) {
-            list.removeIf(row -> id.equals(String.valueOf(row.get("id"))));
+            for (Map<String, Object> row : List.copyOf(list)) {
+                if (id.equals(String.valueOf(row.get("id")))) {
+                    agentId = string(row, "agent_id", "");
+                    list.remove(row);
+                }
+            }
         }
+        syncAgentMcpRefs(agentId);
+    }
+
+    private List<String> mcpRefsForAgent(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return List.of();
+        }
+        List<String> refs = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> entry : mcpBindings.entrySet()) {
+            boolean bound =
+                    entry.getValue().stream()
+                            .anyMatch(
+                                    row ->
+                                            agentId.equals(String.valueOf(row.get("agent_id")))
+                                                    && Boolean.TRUE.equals(
+                                                            row.getOrDefault("enabled", true)));
+            if (bound) {
+                refs.add(entry.getKey());
+            }
+        }
+        return refs.stream().distinct().sorted().toList();
+    }
+
+    private void syncAgentMcpRefs(String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return;
+        }
+        AgentDefinition existing = agentRegistry.findPublished(agentId).orElse(null);
+        if (existing == null) {
+            return;
+        }
+        agentRegistry.upsert(
+                new YamlAgentDefinitionRegistry.AgentConfig(
+                        existing.agentId(),
+                        existing.version(),
+                        existing.name(),
+                        existing.model(),
+                        existing.systemPrompt(),
+                        externalWorkspace(existing.workspace()),
+                        existing.toolRefs(),
+                        mcpRefsForAgent(agentId),
+                        existing.skillRefs(),
+                        existing.orchestration()));
     }
 
     private Map<String, Object> agentRow(AgentDefinition definition) {
@@ -851,6 +1290,12 @@ public class PlatformCompatibilityState {
                             spec.mcpId(),
                             "name",
                             spec.mcpId(),
+                            "transport",
+                            spec.transport(),
+                            "command",
+                            spec.command(),
+                            "args",
+                            spec.args(),
                             "endpoint",
                             spec.url() == null ? spec.command() : spec.url(),
                             "description",
@@ -863,6 +1308,27 @@ public class PlatformCompatibilityState {
                             spec.enabled(),
                             "metadata",
                             row("health_status", "unknown", "last_tool_count", 0)));
+        }
+    }
+
+    private void seedAgentMcpBindings() {
+        for (AgentDefinition definition : agentRegistry.allPublished()) {
+            for (String mcpRef : definition.mcpRefs()) {
+                if (mcpRef == null || mcpRef.isBlank()) {
+                    continue;
+                }
+                Map<String, Object> row =
+                        row(
+                                "id",
+                                definition.agentId() + ":" + mcpRef,
+                                "agent_id",
+                                definition.agentId(),
+                                "mcp_server_id",
+                                mcpRef,
+                                "enabled",
+                                true);
+                mcpBindings.computeIfAbsent(mcpRef, ignored -> new ArrayList<>()).add(row);
+            }
         }
     }
 

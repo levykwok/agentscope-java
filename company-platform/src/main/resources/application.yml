@@ -7,7 +7,7 @@ server:
 
 company:
   platform:
-    workspace: ${COMPANY_PLATFORM_WORKSPACE:./company-platform/workspace}
+    workspace: ${COMPANY_PLATFORM_WORKSPACE:./workspace}
     models:
       config: ${COMPANY_PLATFORM_MODELS_CONFIG:file:${company.platform.workspace}/models.yml}
     providers:

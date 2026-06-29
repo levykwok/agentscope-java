@@ -62,6 +62,45 @@ public class YamlAgentDefinitionRegistry implements AgentDefinitionRegistry {
         return Optional.ofNullable(definitions.get(agentId));
     }
 
+    @Override
+    public synchronized AgentDefinition upsert(AgentConfig agent) {
+        try {
+            AgentsConfig config =
+                    configStore.read(PlatformConfigStore.ConfigFile.AGENTS, AgentsConfig.class);
+            List<AgentConfig> agents =
+                    new java.util.ArrayList<>(
+                            config.agents().stream()
+                                    .filter(existing -> !agent.agentId().equals(existing.agentId()))
+                                    .toList());
+            agents.add(agent);
+            configStore.write(PlatformConfigStore.ConfigFile.AGENTS, new AgentsConfig(agents));
+            load();
+            return findPublished(agent.agentId())
+                    .orElseThrow(
+                            () ->
+                                    new IllegalStateException(
+                                            "Agent was not loaded after save: " + agent.agentId()));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to persist agent: " + agent.agentId(), e);
+        }
+    }
+
+    @Override
+    public synchronized void delete(String agentId) {
+        try {
+            AgentsConfig config =
+                    configStore.read(PlatformConfigStore.ConfigFile.AGENTS, AgentsConfig.class);
+            List<AgentConfig> agents =
+                    config.agents().stream()
+                            .filter(existing -> !agentId.equals(existing.agentId()))
+                            .toList();
+            configStore.write(PlatformConfigStore.ConfigFile.AGENTS, new AgentsConfig(agents));
+            load();
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to delete agent: " + agentId, e);
+        }
+    }
+
     private AgentDefinition toDefinition(AgentConfig agent) {
         return new AgentDefinition(
                 agent.agentId(),
@@ -83,6 +122,18 @@ public class YamlAgentDefinitionRegistry implements AgentDefinitionRegistry {
         }
         Path path = Path.of(resolved);
         return path.isAbsolute() ? path : workspaceRoot.resolve(path);
+    }
+
+    public String externalWorkspace(Path workspace) {
+        if (workspace == null) {
+            return null;
+        }
+        Path absoluteRoot = workspaceRoot.toAbsolutePath().normalize();
+        Path absoluteWorkspace = workspace.toAbsolutePath().normalize();
+        if (absoluteWorkspace.startsWith(absoluteRoot)) {
+            return absoluteRoot.relativize(absoluteWorkspace).toString().replace('\\', '/');
+        }
+        return workspace.toString();
     }
 
     private OrchestrationPolicy resolveOrchestration(OrchestrationPolicy policy) {

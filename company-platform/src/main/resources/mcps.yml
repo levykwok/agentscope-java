@@ -1,1 +1,37 @@
-mcps: []
+﻿mcps:
+  - mcpId: platform-demo-stdio
+    transport: stdio
+    command: node
+    args:
+      - mcp-servers/platform-demo/server.mjs
+      - --transport
+      - stdio
+    enableTools:
+      - platform_echo
+      - platform_time
+      - platform_sum
+    timeout: 10000
+    initializationTimeout: 10000
+    enabled: true
+  - mcpId: platform-demo-streamable-http
+    transport: streamable-http
+    url: http://127.0.0.1:8765/mcp
+    enableTools:
+      - platform_echo
+      - platform_time
+      - platform_sum
+    timeout: 10000
+    initializationTimeout: 10000
+    enabled: false
+  - mcpId: platform-demo-sse
+    transport: sse
+    url: http://127.0.0.1:8766/sse
+    enableTools:
+      - platform_echo
+      - platform_time
+      - platform_sum
+    timeout: 10000
+    initializationTimeout: 10000
+    enabled: false
+
+
